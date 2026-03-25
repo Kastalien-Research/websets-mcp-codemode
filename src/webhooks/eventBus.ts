@@ -5,22 +5,8 @@ import crypto from 'node:crypto';
 import { upsertItem, insertEvent } from '../store/db.js';
 import { processWebhookItem } from './receiverRules.js';
 
-/**
- * Maps webset IDs to lens IDs for the design-partner radar.
- * Configure via setWebsetLensMap() or environment variable WEBSET_LENS_MAP (JSON).
- */
+/** Maps webset IDs to lens IDs for the design-partner radar. */
 let websetLensMap = new Map<string, string>();
-
-// Initialize from env if available
-try {
-  const envMap = process.env.WEBSET_LENS_MAP;
-  if (envMap) {
-    const parsed = JSON.parse(envMap) as Record<string, string>;
-    websetLensMap = new Map(Object.entries(parsed));
-  }
-} catch {
-  // Non-fatal
-}
 
 export function setWebsetLensMap(map: Map<string, string>): void {
   websetLensMap = map;
