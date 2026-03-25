@@ -13,6 +13,7 @@ import * as events from '../handlers/events.js';
 import * as tasks from '../handlers/tasks.js';
 import * as research from '../handlers/research.js';
 import * as exaSearch from '../handlers/exa.js';
+import * as store from '../store/operations.js';
 import { applyCompatCoercions, type AppliedCoercion, type CompatMode } from './coercion.js';
 
 // Single barrel import for all workflow side-effect registrations
@@ -91,6 +92,10 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'exa.findSimilar': { handler: exaSearch.findSimilar, summary: 'Find pages similar to a URL' },
   'exa.getContents': { handler: exaSearch.getContents, summary: 'Extract content from URLs' },
   'exa.answer': { handler: exaSearch.answer, summary: 'Question answering with citations' },
+  'store.annotate': { handler: store.annotate, summary: 'Annotate a local item (judgment, tag, note)' },
+  'store.getItem': { handler: store.getItem, summary: 'Get item with annotations from local store' },
+  'store.listUninvestigated': { handler: store.listUninvestigated, summary: 'List items without judgment annotations' },
+  'store.query': { handler: store.query, summary: 'Read-only SQL query on local store' },
 };
 
 export const OPERATION_NAMES = Object.keys(OPERATIONS) as [string, ...string[]];
@@ -156,6 +161,10 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'exa.findSimilar': exaSearch.Schemas.findSimilar,
   'exa.getContents': exaSearch.Schemas.getContents,
   'exa.answer': exaSearch.Schemas.answer,
+  'store.annotate': store.Schemas.annotate,
+  'store.getItem': store.Schemas.getItem,
+  'store.listUninvestigated': store.Schemas.listUninvestigated,
+  'store.query': store.Schemas.query,
 };
 
 export function withCoercionMetadata(

@@ -1,11 +1,12 @@
 import crypto from "node:crypto";
-import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
+import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Exa } from "exa-js";
 import { registerSearchTool } from "./tools/searchTool.js";
 import { registerExecuteTool } from "./tools/executeTool.js";
 import { registerStatusTool } from "./tools/statusTool.js";
+import { createWebhookRouter } from "./webhooks/receiver.js";
 import type { Express, Request, Response } from "express";
 
 export interface ServerConfig {
@@ -14,6 +15,8 @@ export interface ServerConfig {
   sessionTimeoutMs?: number;
   /** @default 'safe' — override with DEFAULT_COMPAT_MODE env var or per-call compat.mode */
   defaultCompatMode?: 'safe' | 'strict';
+  /** Secret for verifying Exa webhook signatures (Exa-Signature header) */
+  webhookSecret?: string;
 }
 
 export interface ServerInstance {
@@ -31,15 +34,26 @@ interface SessionEntry {
 const DEFAULT_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 export function createServer(config: ServerConfig): ServerInstance {
-  const app = createMcpExpressApp({
-    host: config.host ?? '0.0.0.0'
-  });
+  // Manual Express setup (replaces createMcpExpressApp) to capture raw body
+  // for webhook signature verification. The SDK's createMcpExpressApp only adds
+  // express.json() and optional host validation — for host '0.0.0.0' it just
+  // logs a warning, so no middleware to replicate.
+  const app = express();
+  app.use(express.json({
+    verify: (req, _res, buf) => {
+      // Store raw body for Exa webhook signature verification
+      (req as any).__rawBody = buf;
+    },
+  }));
 
   // Health endpoint for Docker healthchecks and k8s probes
   app.get('/health', (_req: Request, res: Response) => {
     res.setHeader('Content-Type', 'application/json');
     res.json({ status: 'ok' });
   });
+
+  // Webhook receiver for Exa webhook events + SSE stream for channel bridges
+  app.use(createWebhookRouter(config.webhookSecret));
 
   const exa = new Exa(config.exaApiKey || 'dummy-key-for-testing');
   const sessions = new Map<string, SessionEntry>();

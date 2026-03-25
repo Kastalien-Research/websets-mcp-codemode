@@ -16,6 +16,7 @@ if (
 const { app } = createServer({
   exaApiKey: process.env.EXA_API_KEY || '',
   defaultCompatMode,
+  webhookSecret: process.env.EXA_WEBHOOK_SECRET,
 });
 
 const PORT = process.env.PORT || 7860;

@@ -1,0 +1,95 @@
+{
+  "name": "ml-frontier-mapping",
+  "proxy": "A new methodological breakthrough is emerging at the intersection of these research areas",
+  "lenses": [
+    {
+      "id": "core-papers",
+      "source": {
+        "query": "{{topic}} novel method state-of-the-art results",
+        "entity": { "type": "research_paper" },
+        "criteria": [
+          { "description": "Paper presents a new method or significant improvement, not a survey or review" },
+          { "description": "Published or posted within the last 90 days" }
+        ],
+        "enrichments": [
+          { "description": "Primary methodological contribution in one sentence", "format": "text" },
+          { "description": "Claimed improvement over prior work (percentage or metric)", "format": "text" },
+          { "description": "Key datasets or benchmarks used", "format": "text" }
+        ],
+        "count": 50
+      }
+    },
+    {
+      "id": "adjacent-methods",
+      "source": {
+        "query": "{{topic}} technique applied to {{adjacent_domain}}",
+        "entity": { "type": "research_paper" },
+        "criteria": [
+          { "description": "Paper applies methods from {{topic}} to a different domain or vice versa" },
+          { "description": "Published within the last 120 days" }
+        ],
+        "enrichments": [
+          { "description": "Which domain is the method being transferred to or from", "format": "text" },
+          { "description": "Whether the cross-domain transfer produced competitive results", "format": "options", "options": [{ "label": "Yes" }, { "label": "Partial" }, { "label": "No" }, { "label": "Unclear" }] }
+        ],
+        "count": 30
+      }
+    },
+    {
+      "id": "applications",
+      "source": {
+        "query": "{{topic}} deployed production real-world application case study",
+        "entity": { "type": "company" },
+        "criteria": [
+          { "description": "Company or team has deployed {{topic}} methods in a real product or system, not just research" }
+        ],
+        "enrichments": [
+          { "description": "What product or system uses this method", "format": "text" },
+          { "description": "Scale of deployment (users, requests, data volume)", "format": "text" },
+          { "description": "Industry vertical", "format": "text" }
+        ],
+        "count": 30
+      }
+    }
+  ],
+  "shapes": [
+    {
+      "lensId": "core-papers",
+      "conditions": [
+        { "enrichment": "Claimed improvement over prior work (percentage or metric)", "operator": "exists" }
+      ],
+      "logic": "all"
+    },
+    {
+      "lensId": "adjacent-methods",
+      "conditions": [
+        { "enrichment": "Whether the cross-domain transfer produced competitive results", "operator": "oneOf", "value": ["Yes", "Partial"] }
+      ],
+      "logic": "all"
+    },
+    {
+      "lensId": "applications",
+      "conditions": [
+        { "enrichment": "Scale of deployment (users, requests, data volume)", "operator": "exists" }
+      ],
+      "logic": "all"
+    }
+  ],
+  "join": {
+    "by": "cooccurrence",
+    "temporal": { "window": "within_days", "days": 60 }
+  },
+  "signal": {
+    "proxy": "A methodological breakthrough is emerging — new papers with results, cross-domain transfer working, and production deployments appearing simultaneously",
+    "requires": { "type": "all" }
+  },
+  "monitor": { "cron": "0 6 * * 1", "timezone": "UTC" },
+  "webhookUrl": "http://localhost:7860",
+  "_usage": {
+    "description": "Monitors a research frontier for convergence signals. All three lenses firing means the topic is moving from theory to practice.",
+    "example_variables": {
+      "topic": "graph neural networks",
+      "adjacent_domain": "drug discovery"
+    }
+  }
+}

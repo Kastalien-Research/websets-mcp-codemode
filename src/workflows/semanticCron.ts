@@ -11,6 +11,7 @@ import {
 } from './helpers.js';
 import { projectItem } from '../lib/projections.js';
 import { diceCoefficient } from './convergent.js';
+import { insertSnapshot, getLatestSnapshot } from '../store/db.js';
 
 // --- Types ---
 
@@ -22,6 +23,10 @@ interface SemanticCronConfig {
   join: JoinConfig;
   signal: SignalConfig;
   monitor?: { cron: string; timezone?: string };
+  /** URL of the MCP server for auto-registering Exa webhooks */
+  webhookUrl?: string;
+  /** Event types to subscribe to (defaults to item.created, item.enriched, idle) */
+  webhookEvents?: string[];
 }
 
 interface LensConfig {
@@ -689,8 +694,18 @@ async function semanticCronWorkflow(
   const rawConfig = args.config as SemanticCronConfig;
   const variables = args.variables as Record<string, string> | undefined;
   const existingWebsets = args.existingWebsets as Record<string, string> | undefined;
-  const previousSnapshot = args.previousSnapshot as SnapshotData | undefined;
   const timeoutMs = (args.timeout as number) ?? 300_000;
+
+  // Load previous snapshot from args or SQLite
+  let previousSnapshot = args.previousSnapshot as SnapshotData | undefined;
+  if (!previousSnapshot && rawConfig.name) {
+    try {
+      const stored = getLatestSnapshot(rawConfig.name);
+      if (stored) previousSnapshot = stored as SnapshotData;
+    } catch {
+      // SQLite not available — non-fatal
+    }
+  }
 
   // Step: Validate + expand templates
   const step0 = Date.now();
@@ -823,6 +838,23 @@ async function semanticCronWorkflow(
     }
   }
 
+  // Register Exa webhooks (initial run only, non-fatal)
+  if (!isReeval && config.webhookUrl) {
+    const whEvents = config.webhookEvents ?? [
+      'webset.item.created',
+      'webset.item.enriched',
+      'webset.idle',
+    ];
+    try {
+      await exa.websets.webhooks.create({
+        url: `${config.webhookUrl}/webhooks/exa`,
+        events: whEvents,
+      } as any);
+    } catch {
+      // Webhook creation failure is non-fatal
+    }
+  }
+
   if (isCancelled(taskId, store)) {
     if (!isReeval) {
       for (const id of Object.values(websetIds)) {
@@ -943,6 +975,15 @@ async function semanticCronWorkflow(
 
   // Step: Build snapshot
   const snapshot = buildSnapshot(lensResults, joinResult, signalResult, websetIds);
+
+  // Persist snapshot to SQLite
+  if (config.name) {
+    try {
+      insertSnapshot(config.name, snapshot);
+    } catch {
+      // SQLite not available — non-fatal
+    }
+  }
 
   // Step: Create monitors (initial run only, non-fatal)
   if (!isReeval && config.monitor) {

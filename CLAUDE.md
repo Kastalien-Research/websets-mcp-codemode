@@ -29,6 +29,12 @@ npm run test:e2e
 - `src/tools/executeTool.ts` registers the Code Mode `execute` tool (code execution).
 - `src/handlers/` contains the domain handlers.
 - `src/workflows/` contains background workflows invoked through `tasks.create`.
+- `src/webhooks/receiver.ts` serves `POST /webhooks/exa` (Exa webhook receiver) and `GET /webhooks/events` (SSE stream).
+- `src/webhooks/signature.ts` verifies `Exa-Signature` HMAC-SHA256 headers.
+- `src/webhooks/eventBus.ts` decouples webhook ingestion from SSE delivery with SQLite persistence.
+- `src/store/db.ts` SQLite shadow store for Webset items + local annotations layer.
+- `src/store/operations.ts` exposes `store.annotate`, `store.getItem`, `store.listUninvestigated`, `store.query`.
+- `src/channel.ts` standalone stdio MCP channel bridge for Claude Code webhook notifications.
 
 ### MCP Tools
 

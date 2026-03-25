@@ -122,12 +122,48 @@ Runs a higher-level semantic monitoring workflow that evaluates cross-signal con
 time. This is more analytical than a simple `monitors.create` schedule.
 
 Typical args:
-- `config`
-- `subject?`
-- `window?`
+- `config` — full semantic cron configuration (lenses, shapes, join, signal)
+- `variables?` — template variable values (e.g., `{"subject": "Tesla"}`)
+- `existingWebsets?` — map of lens ID to webset ID (for re-evaluation)
+- `previousSnapshot?` — snapshot from last evaluation (auto-loaded from SQLite if `config.name` is set)
+- `timeout?` — max time to wait for searches (default: 300000ms)
+
+New in this version:
+- `config.webhookUrl` — when set, auto-registers Exa webhooks pointing at `{webhookUrl}/webhooks/exa`
+- `config.name` — when set, snapshots are persisted to SQLite for automatic delta computation
+- Snapshots persist to local SQLite store (`data/websets.db`) for cross-run continuity
 
 For deeper prompt and configuration guidance, see
 `docs/prompts/semantic-crons.md`.
+
+## Webhook Channel Integration
+
+The server includes a webhook receiver and Claude Code channel bridge for event-driven research.
+
+### Webhook Receiver (built into Express app)
+
+- `POST /webhooks/exa` — receives Exa webhook events, verifies `Exa-Signature` header
+- `GET /webhooks/events` — SSE stream for channel bridges
+- `GET /webhooks/status` — webhook system health check
+
+Set `EXA_WEBHOOK_SECRET` env var to enable signature verification.
+
+### Channel Bridge (`src/channel.ts`)
+
+A separate stdio MCP server that Claude Code spawns as a subprocess. Subscribes to the
+webhook event stream and pushes notifications into the Claude Code session via the
+`notifications/claude/channel` protocol.
+
+Start with: `claude --dangerously-load-development-channels server:websets-channel`
+
+### Local Store Operations
+
+The SQLite shadow store (`data/websets.db`) mirrors Webset items and adds an annotation layer:
+
+- `store.annotate` — add judgment, tag, note, or research finding to an item
+- `store.getItem` — get item with all annotations
+- `store.listUninvestigated` — items without judgment annotations
+- `store.query` — read-only SQL against the local store
 
 ## Internal / Test Workflow
 
