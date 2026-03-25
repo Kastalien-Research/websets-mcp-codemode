@@ -72,7 +72,13 @@ describe('errorResult with hints', () => {
   });
 
   it('works without hints (backward compatible)', () => {
+    const result = errorResult('websets.get', new Error('something went wrong'));
+    expect(result.content[0].text).toBe('Error in websets.get: something went wrong');
+  });
+
+  it('auto-detects not-found pattern and appends hint', () => {
     const result = errorResult('websets.get', new Error('not found'));
-    expect(result.content[0].text).toBe('Error in websets.get: not found');
+    expect(result.content[0].text).toContain('Error in websets.get: not found');
+    expect(result.content[0].text).toContain('Resource not found');
   });
 });

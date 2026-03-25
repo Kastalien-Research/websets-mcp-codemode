@@ -1,30 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { registerManageWebsetsTool } from '../manageWebsets.js';
+import { dispatchOperation } from '../operations.js';
 
-function setupTool(exa: any, options?: { defaultCompatMode?: 'safe' | 'strict' }) {
-  let handler: ((input: any) => Promise<any>) | null = null;
-  let inputSchema: { parse: (input: unknown) => unknown } | null = null;
-
-  const fakeServer = {
-    registerTool: vi.fn((_name, config, fn) => {
-      handler = fn;
-      inputSchema = config.inputSchema;
-    }),
-  };
-
-  registerManageWebsetsTool(fakeServer as any, exa, options);
-  expect(handler).not.toBeNull();
-  expect(inputSchema).not.toBeNull();
-
-  const call = async (input: Record<string, unknown>) => {
-    const parsed = inputSchema!.parse(input);
-    return handler!(parsed);
-  };
-
-  return { call };
-}
-
-describe('registerManageWebsetsTool', () => {
+describe('dispatchOperation', () => {
   it('applies safe compat coercions and returns metadata', async () => {
     const createSpy = vi.fn().mockResolvedValue({
       id: 'search_1',
@@ -40,11 +17,9 @@ describe('registerManageWebsetsTool', () => {
       },
     } as any;
 
-    const { call } = setupTool(exa);
-
-    const result = await call({
-      operation: 'searches.create',
-      args: {
+    const result = await dispatchOperation(
+      'searches.create',
+      {
         compat: { mode: 'safe' },
         websetId: 'ws_1',
         query: 'ai startups',
@@ -52,7 +27,9 @@ describe('registerManageWebsetsTool', () => {
         criteria: ['has funding'],
         count: '25',
       },
-    });
+      exa,
+      'strict',
+    );
 
     expect(createSpy).toHaveBeenCalledTimes(1);
     expect(createSpy).toHaveBeenCalledWith('ws_1', {
@@ -71,7 +48,7 @@ describe('registerManageWebsetsTool', () => {
     ]);
   });
 
-  it('accepts legacy args envelope without coercion when values are already valid', async () => {
+  it('accepts valid args without coercion', async () => {
     const createSpy = vi.fn().mockResolvedValue({
       id: 'search_1',
       status: 'completed',
@@ -86,17 +63,17 @@ describe('registerManageWebsetsTool', () => {
       },
     } as any;
 
-    const { call } = setupTool(exa);
-
-    await call({
-      operation: 'searches.create',
-      args: {
+    await dispatchOperation(
+      'searches.create',
+      {
         websetId: 'ws_1',
         query: 'ai startups',
         entity: { type: 'company' },
         criteria: [{ description: 'has funding' }],
       },
-    });
+      exa,
+      'strict',
+    );
 
     expect(createSpy).toHaveBeenCalledWith('ws_1', {
       query: 'ai startups',
@@ -116,13 +93,16 @@ describe('registerManageWebsetsTool', () => {
       },
     } as any;
 
-    const { call } = setupTool(exa);
-    const result = await call({
-      operation: 'searches.create',
-      websetId: 'ws_1',
-      query: 'ai startups',
-      entity: 'company',
-    });
+    const result = await dispatchOperation(
+      'searches.create',
+      {
+        websetId: 'ws_1',
+        query: 'ai startups',
+        entity: 'company',
+      },
+      exa,
+      'strict',
+    );
 
     expect(createSpy).not.toHaveBeenCalled();
     expect(result.isError).toBe(true);
@@ -144,20 +124,22 @@ describe('registerManageWebsetsTool', () => {
       },
     } as any;
 
-    const { call } = setupTool(exa);
-
-    const result = await call({
-      operation: 'searches.create',
-      compat: { mode: 'aggressive' as any },
-      websetId: 'ws_1',
-      query: 'ai startups',
-    });
+    const result = await dispatchOperation(
+      'searches.create',
+      {
+        compat: { mode: 'aggressive' as any },
+        websetId: 'ws_1',
+        query: 'ai startups',
+      },
+      exa,
+      'strict',
+    );
 
     const body = JSON.parse(result.content[0].text);
     expect(body._warnings).toEqual(['Unsupported compat mode "aggressive"; ignored.']);
   });
 
-  it('honors server-level default compat mode and per-call strict override', async () => {
+  it('honors safe default compat mode and per-call strict override', async () => {
     const createSpy = vi.fn().mockResolvedValue({
       id: 'search_1',
       status: 'completed',
@@ -172,27 +154,35 @@ describe('registerManageWebsetsTool', () => {
       },
     } as any;
 
-    const { call } = setupTool(exa, { defaultCompatMode: 'safe' });
-
-    await call({
-      operation: 'searches.create',
-      websetId: 'ws_1',
-      query: 'ai startups',
-      entity: 'company',
-    });
+    // Safe mode default — entity coercion fires
+    await dispatchOperation(
+      'searches.create',
+      {
+        websetId: 'ws_1',
+        query: 'ai startups',
+        entity: 'company',
+      },
+      exa,
+      'safe',
+    );
 
     expect(createSpy).toHaveBeenNthCalledWith(1, 'ws_1', {
       query: 'ai startups',
       entity: { type: 'company' },
     });
 
-    const strictResult = await call({
-      operation: 'searches.create',
-      compat: { mode: 'strict' },
-      websetId: 'ws_1',
-      query: 'ai startups',
-      entity: 'company',
-    });
+    // Per-call strict override — entity coercion does NOT fire
+    const strictResult = await dispatchOperation(
+      'searches.create',
+      {
+        compat: { mode: 'strict' },
+        websetId: 'ws_1',
+        query: 'ai startups',
+        entity: 'company',
+      },
+      exa,
+      'safe',
+    );
 
     expect(createSpy).toHaveBeenCalledTimes(1);
     expect(strictResult.isError).toBe(true);
@@ -214,15 +204,17 @@ describe('registerManageWebsetsTool', () => {
       },
     } as any;
 
-    const { call } = setupTool(exa);
-
-    const result = await call({
-      operation: 'searches.create',
-      compat: { mode: 'safe', preview: true },
-      websetId: 'ws_1',
-      query: 'ai startups',
-      entity: 'company',
-    });
+    const result = await dispatchOperation(
+      'searches.create',
+      {
+        compat: { mode: 'safe', preview: true },
+        websetId: 'ws_1',
+        query: 'ai startups',
+        entity: 'company',
+      },
+      exa,
+      'strict',
+    );
 
     expect(createSpy).not.toHaveBeenCalled();
     const body = JSON.parse(result.content[0].text);
@@ -250,19 +242,21 @@ describe('registerManageWebsetsTool', () => {
       },
     } as any;
 
-    const { call } = setupTool(exa);
-
-    await call({
-      operation: 'websets.create',
-      searchQuery: 'ai startups',
-      enrichments: [
-        {
-          description: 'Company stage',
-          format: 'options',
-          options: [{ label: 'Seed' }, { label: 'Series A' }],
-        },
-      ],
-    });
+    await dispatchOperation(
+      'websets.create',
+      {
+        searchQuery: 'ai startups',
+        enrichments: [
+          {
+            description: 'Company stage',
+            format: 'options',
+            options: [{ label: 'Seed' }, { label: 'Series A' }],
+          },
+        ],
+      },
+      exa,
+      'strict',
+    );
 
     expect(createSpy).toHaveBeenCalledWith({
       search: {
@@ -277,5 +271,12 @@ describe('registerManageWebsetsTool', () => {
         },
       ],
     });
+  });
+
+  it('returns error for unknown operation', async () => {
+    const exa = {} as any;
+    const result = await dispatchOperation('nonexistent.op', {}, exa, 'strict');
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Unknown operation: nonexistent.op');
   });
 });

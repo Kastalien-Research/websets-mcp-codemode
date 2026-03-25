@@ -1,17 +1,10 @@
 {
   "name": "schwartz13",
   "version": "1.0.0",
-  "description": "A Model Context Protocol server for Exa Websets API. Create, manage, and enrich collections of web entities (companies, people, papers) with automated search, enrichments, and monitoring capabilities.",
-  "mcpName": "io.github.kastalien-research/schwartz13",
+  "private": true,
+  "description": "Docker-first MCP server for Exa Websets API. Create, manage, and enrich collections of web entities (companies, people, papers) with automated search, enrichments, and monitoring capabilities.",
   "type": "module",
   "module": "./src/index.ts",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Kastalien-Research/schwartz13.git"
-  },
-  "files": [
-    "dist"
-  ],
   "keywords": [
     "mcp",
     "model context protocol",
@@ -27,7 +20,6 @@
   "author": "Exa Labs",
   "scripts": {
     "build": "tsc && chmod +x dist/index.js",
-    "prepare": "npm run build",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
     "dev": "tsc --watch & nodemon dist/index.js",

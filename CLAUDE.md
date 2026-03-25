@@ -1,124 +1,45 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This repository is currently a Docker-first MCP server for Exa Websets.
 
-## Project Overview
+## Working Assumptions
 
-Exa Websets MCP Server — a Model Context Protocol server that exposes Exa's Websets API as tools for Claude Desktop, Cursor, and other MCP clients. Websets are self-updating collections of web entities (companies, people, papers) with search, enrichment, and monitoring capabilities.
+- Treat Docker and HTTP transport as the primary runtime.
+- Do not treat this as a published npm package.
+- If we add a non-Docker path later, that should be designed deliberately rather than inferred
+  from stale docs.
 
-## Build & Development Commands
+## Useful Commands
 
 ```bash
-npm run build              # TypeScript compile to dist/ + chmod +x
-npm run watch              # TypeScript watch mode (tsc --watch, outputs to dist/)
-npm run start              # Run the server (node dist/index.js)
-npm run dev                # Dev mode with auto-restart
-npm run inspector          # Run MCP inspector against dist/index.js
-npm run test               # Run tests (vitest run)
-npx vitest run src/handlers/__tests__/enrichments.test.ts  # Run a single test file
+docker compose up --build
+npm run build
+npm test
+npm run test:e2e
 ```
 
-## Architecture
+## Architecture Snapshot
 
-### Unified Dispatcher (v2.0.0)
+- `src/index.ts` boots the Express app and listens on port `7860`.
+- `src/server.ts` exposes MCP over `StreamableHTTPServerTransport` at `/mcp`.
+- `src/tools/operations.ts` exports the `OPERATIONS` registry, `dispatchOperation()`, and supporting utilities.
+- `src/tools/catalog.ts` builds a searchable index of all 60 operations + workflows.
+- `src/tools/searchTool.ts` registers the Code Mode `search` tool (operation discovery).
+- `src/tools/sandbox.ts` executes LLM-generated JS in a `vm` sandbox with `callOperation` injected.
+- `src/tools/executeTool.ts` registers the Code Mode `execute` tool (code execution).
+- `src/handlers/` contains the domain handlers.
+- `src/workflows/` contains background workflows invoked through `tasks.create`.
 
-The server exposes a **single MCP tool** (`manage_websets`) that dispatches to 60 operations across 11 domains. This follows the Thoughtbox hub tool pattern.
+### MCP Tools
 
-### Entry Point
+The server exposes three tools:
+1. **`search`** — Code Mode discovery: find operations by keyword/domain with brief/detailed/full schemas
+2. **`execute`** — Code Mode execution: run JS code with `callOperation()` in a sandboxed `vm`
+3. **`status`** — Account overview: webset counts, running tasks, active monitors, server capabilities
 
-`src/index.ts` — Express + StreamableHTTPServerTransport. Registers the single `manage_websets` tool via `registerManageWebsetsTool(server, exa)`.
+## Agent Guidance
 
-### Tool Input Schema
-
-```typescript
-{
-  operation: z.enum([...60 operation names]),  // e.g. "websets.create", "searches.get"
-  args: z.record(z.string(), z.unknown()).optional()  // operation-specific args
-}
-```
-
-### Dispatcher
-
-`src/tools/manageWebsets.ts` — contains the OPERATIONS registry (Map of operation name → handler + summary), builds the tool description, and dispatches to domain handlers.
-
-### Domain Handlers (src/handlers/)
-
-| File | Operations | Count |
-|------|-----------|-------|
-| `websets.ts` | create, get, list, update, delete, cancel, preview, waitUntilIdle, getAll | 9 |
-| `searches.ts` | create, get, cancel | 3 |
-| `items.ts` | list, get, delete, getAll | 4 |
-| `enrichments.ts` | create, get, cancel, update, delete | 5 |
-| `monitors.ts` | create, get, list, update, delete, runsList, runsGet, getAll | 8 |
-| `webhooks.ts` | create, get, list, update, delete, listAttempts, getAll, getAllAttempts | 8 |
-| `imports.ts` | create, get, list, update, delete, waitUntilCompleted, getAll | 7 |
-| `events.ts` | list, get, getAll | 3 |
-| `tasks.ts` | create, get, result, list, cancel | 5 |
-| `research.ts` | create, get, list, pollUntilFinished | 4 |
-| `exa.ts` | search, findSimilar, getContents, answer | 4 |
-
-Each handler exports named functions with signature `(args: Record<string, unknown>, exa: Exa) => Promise<ToolResult>`.
-
-### Response Projections (src/lib/projections.ts)
-
-All handler responses pass through domain-specific projection functions that extract decision-relevant fields and drop noise (timestamps, config, content, reasoning). This reduces agent context usage by 10-100×. Key behaviors:
-- **Items**: Bulk responses (`items.list`, `items.getAll`, workflow results) filter out items where no `evaluation.satisfied === "yes"` and project to `{id, name, url, entityType, description, evaluations, enrichments}`
-- **Items (single)**: `items.get` returns full raw response for inspection
-- **All domains**: Metadata preserved, timestamps/config stripped, entity type promoted to top level
-
-### Workflows (src/workflows/)
-
-Long-running background tasks created via `tasks.create`. Each workflow registers itself in the workflow registry on import.
-
-| File | Type | Description |
-|------|------|-------------|
-| `helpers.ts` | — | Shared validators, polling, collection, WorkflowError, withSummary |
-| `types.ts` | — | Workflow registry (registerWorkflow/workflowRegistry) |
-| `echo.ts` | echo | Test workflow |
-| `lifecycle.ts` | lifecycle.harvest | Search + enrich + collect all items |
-| `convergent.ts` | convergent.search | N queries → deduplicate → intersection |
-| `adversarial.ts` | adversarial.verify | Thesis vs antithesis + optional synthesis |
-| `qdWinnow.ts` | qd.winnow | Quality-diversity: criteria × enrichments |
-| `researchDeep.ts` | research.deep | Exa Research API wrapper |
-| `verifiedCollection.ts` | research.verifiedCollection | Collection + per-entity deep research |
-| `searchAndRead.ts` | retrieval.searchAndRead | Exa search + getContents for full text |
-| `expandAndCollect.ts` | retrieval.expandAndCollect | Search + findSimilar on top results |
-| `verifiedAnswer.ts` | retrieval.verifiedAnswer | Exa answer + source verification |
-
-### Key Modules
-
-- `src/handlers/types.ts` — `ToolResult`, `OperationHandler` types, `successResult()` and `errorResult()` helpers
-- `src/lib/exa.ts` — Singleton Exa client
-- `src/utils/logger.ts` — Debug-conditional stderr logging with request ID generation
-
-### Application-Level Validations
-
-Three handlers have validation beyond what the SDK enforces:
-- `enrichments.create` — options required when format='options', max 150 options
-- `monitors.create` — cron expression must have exactly 5 fields
-- `searches.create` — error messages include "Common issues" hints
-
-### Parameter Format Gotchas
-
-AI callers commonly get these wrong:
-- `criteria` must be `[{description: "..."}]` (array of objects, not strings)
-- `entity` must be `{type: "company"}` (object, not string)
-- `options` must be `[{label: "..."}]` (array of objects, not strings)
-- `cron` must be 5-field format: `"minute hour day month weekday"`
-- `compat.preview = true` performs a dry-run coercion preview and skips execution
-
-## Testing
-
-Tests use **Vitest** with config in `vitest.config.ts` (excludes `dist/` dir). Test files live in `src/handlers/__tests__/`, `src/workflows/__tests__/`, and `src/lib/__tests__/`. ~365 tests across 38 files. Tests mock the Exa client to verify handler logic, validation, projections, and error formatting.
-
-## Environment
-
-- **Required**: `EXA_API_KEY` environment variable (or passed via config)
-- **Optional**: `MANAGE_WEBSETS_DEFAULT_COMPAT_MODE` (`strict` default, `safe` to enable default coercions)
-- **Node**: >=20.0.0
-- **Module system**: ESM (`"type": "module"` in package.json)
-- TypeScript target: ES2022, module: Node16, strict mode
-
-## Issue Tracking
-
-This project uses **bd** (beads) for issue tracking. See `bd ready` for available work, `bd sync` to push beads state with git.
+- Keep docs aligned with Docker-first operation.
+- Prefer removing stale local assistant scaffolding over preserving broken historical flows.
+- For the load-bearing skill during this refactor, use
+  `/workspaces/openchatwidget/.agents/skills/code-mode-servers/SKILL.md`.

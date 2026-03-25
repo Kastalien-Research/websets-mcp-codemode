@@ -52,7 +52,7 @@ export const create: OperationHandler = async (args, exa) => {
 
     return successResult({ taskId: task.id, status: 'pending' });
   } catch (error) {
-    return errorResult('tasks.create', error);
+    return errorResult('tasks.create', error, 'Ensure task type is valid (use tasks.list to see running tasks). Task args should match the workflow schema — use the search tool to discover required parameters.');
   }
 };
 
@@ -62,7 +62,7 @@ export const get: OperationHandler = async (args) => {
 
   const task = taskStore.get(args.taskId as string);
   if (!task) {
-    return errorResult('tasks.get', `Task not found: ${args.taskId}`);
+    return errorResult('tasks.get', `Task not found: ${args.taskId}`, 'Task IDs are ephemeral and only valid for the current server session. Use tasks.list to find active tasks.');
   }
   return successResult(task);
 };

@@ -128,7 +128,7 @@ export const findSimilar: OperationHandler = async (args, exa) => {
     const response = await exa.findSimilar(args.url as string, hasOpts ? opts as any : undefined);
     return successResult(response);
   } catch (error) {
-    return errorResult('exa.findSimilar', error);
+    return errorResult('exa.findSimilar', error, 'Ensure url is a valid URL. Use excludeSourceDomain: true to filter out results from the same domain.');
   }
 };
 

@@ -3,13 +3,16 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Exa } from "exa-js";
-import { registerManageWebsetsTool } from "./tools/manageWebsets.js";
+import { registerSearchTool } from "./tools/searchTool.js";
+import { registerExecuteTool } from "./tools/executeTool.js";
+import { registerStatusTool } from "./tools/statusTool.js";
 import type { Express, Request, Response } from "express";
 
 export interface ServerConfig {
   exaApiKey: string;
   host?: string;
   sessionTimeoutMs?: number;
+  /** @default 'safe' — override with DEFAULT_COMPAT_MODE env var or per-call compat.mode */
   defaultCompatMode?: 'safe' | 'strict';
 }
 
@@ -122,8 +125,12 @@ export function createServer(config: ServerConfig): ServerInstance {
           enableJsonResponse: true,
         });
 
-        registerManageWebsetsTool(server, exa, {
-          defaultCompatMode: config.defaultCompatMode ?? 'strict',
+        registerSearchTool(server);
+        registerExecuteTool(server, exa, {
+          defaultCompatMode: config.defaultCompatMode ?? 'safe',
+        });
+        registerStatusTool(server, exa, {
+          defaultCompatMode: config.defaultCompatMode ?? 'safe',
         });
 
         transport.onclose = () => {

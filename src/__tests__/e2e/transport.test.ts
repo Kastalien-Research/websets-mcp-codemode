@@ -17,100 +17,132 @@ describe.skipIf(!HAS_API_KEY)('MCP Transport E2E', () => {
     await expect(ctx.client.ping()).resolves.toBeDefined();
   });
 
-  it('tools/list returns manage_websets', async () => {
+  it('tools/list returns all three tools', async () => {
     const result = await ctx.client.listTools();
-    expect(result.tools).toHaveLength(1);
-    expect(result.tools[0].name).toBe('manage_websets');
-    expect(result.tools[0].description).toContain('Manage Exa Websets');
+    expect(result.tools).toHaveLength(3);
+    const names = result.tools.map(t => t.name).sort();
+    expect(names).toEqual(['execute', 'search', 'status']);
   });
 
-  it('tool call: websets.list returns data', async () => {
+  // --- search (Code Mode discovery) ---
+
+  it('search: returns results for keyword query', async () => {
     const result = await ctx.client.callTool({
-      name: 'manage_websets',
-      arguments: { operation: 'websets.list', limit: 1 },
+      name: 'search',
+      arguments: { query: 'create', detail: 'brief', limit: 5 },
     });
     expect(result.isError).toBeFalsy();
-    expect(result.content).toBeDefined();
-    expect(Array.isArray(result.content)).toBe(true);
+    const content = result.content as Array<{ type: string; text: string }>;
+    const data = JSON.parse(content[0].text);
+    expect(data.total).toBeGreaterThan(0);
+    expect(data.results.length).toBeGreaterThan(0);
+    expect(data.results[0]).toHaveProperty('name');
+    expect(data.results[0]).toHaveProperty('summary');
   });
 
-  it('tool call: unknown operation returns error', async () => {
+  it('search: domain filter restricts results', async () => {
     const result = await ctx.client.callTool({
-      name: 'manage_websets',
-      arguments: { operation: 'nonexistent.op' } as any,
+      name: 'search',
+      arguments: { query: '', domain: 'enrichments' },
     });
-    // The dispatcher validates operation via zod enum, so the SDK may throw
-    // or return an error result depending on how the server handles it
-    expect(result.isError).toBeTruthy();
+    expect(result.isError).toBeFalsy();
+    const content = result.content as Array<{ type: string; text: string }>;
+    const data = JSON.parse(content[0].text);
+    expect(data.total).toBeGreaterThanOrEqual(5); // enrichments has 5 ops
+    for (const r of data.results) {
+      expect(r.name).toMatch(/^enrichments\./);
+    }
   });
 
-  it('tool call: websets.preview returns results', async () => {
+  it('search: detailed level returns params', async () => {
     const result = await ctx.client.callTool({
-      name: 'manage_websets',
+      name: 'search',
+      arguments: { query: 'websets.create', detail: 'detailed', limit: 1 },
+    });
+    expect(result.isError).toBeFalsy();
+    const content = result.content as Array<{ type: string; text: string }>;
+    const data = JSON.parse(content[0].text);
+    expect(data.results[0]).toHaveProperty('params');
+    expect(Array.isArray(data.results[0].params)).toBe(true);
+  });
+
+  // --- execute (Code Mode execution) ---
+
+  it('execute: runs simple code and returns result', async () => {
+    const result = await ctx.client.callTool({
+      name: 'execute',
+      arguments: { code: 'return 1 + 2' },
+    });
+    expect(result.isError).toBeFalsy();
+    const content = result.content as Array<{ type: string; text: string }>;
+    const data = JSON.parse(content[0].text);
+    expect(data.result).toBe(3);
+  });
+
+  it('execute: callOperation dispatches to websets.list', async () => {
+    const result = await ctx.client.callTool({
+      name: 'execute',
       arguments: {
-        operation: 'websets.preview',
-        query: 'AI research labs',
-        count: 2,
+        code: `
+          const data = await callOperation('websets.list', { limit: 1 });
+          return { type: typeof data, hasData: data !== null };
+        `,
       },
     });
     expect(result.isError).toBeFalsy();
     const content = result.content as Array<{ type: string; text: string }>;
-    expect(content.length).toBeGreaterThan(0);
-    expect(content[0].type).toBe('text');
+    const data = JSON.parse(content[0].text);
+    expect(data.result.hasData).toBe(true);
   });
 
-  it('full lifecycle: create → get → cancel → delete', async () => {
-    let websetId: string | undefined;
-    try {
-      // Create
-      const createResult = await ctx.client.callTool({
-        name: 'manage_websets',
-        arguments: {
-          operation: 'websets.create',
-          searchQuery: 'E2E test companies',
-          searchCount: 5,
-          entity: { type: 'company' },
-        },
-      });
-      expect(createResult.isError).toBeFalsy();
-      const createContent = createResult.content as Array<{ type: string; text: string }>;
-      const createData = JSON.parse(createContent[0].text);
-      websetId = createData.id;
-      expect(websetId).toBeDefined();
+  it('execute: full lifecycle via callOperation', async () => {
+    const result = await ctx.client.callTool({
+      name: 'execute',
+      arguments: {
+        code: `
+          const ws = await callOperation('websets.create', {
+            searchQuery: 'E2E test', searchCount: 5,
+            entity: { type: 'company' }
+          });
+          const got = await callOperation('websets.get', { id: ws.id });
+          await callOperation('websets.cancel', { id: ws.id });
+          await callOperation('websets.delete', { id: ws.id });
+          return { created: ws.id, verified: got.id === ws.id };
+        `,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+  });
 
-      // Get
-      const getResult = await ctx.client.callTool({
-        name: 'manage_websets',
-        arguments: {
-          operation: 'websets.get',
-          id: websetId,
-        },
-      });
-      expect(getResult.isError).toBeFalsy();
-      const getContent = getResult.content as Array<{ type: string; text: string }>;
-      const getData = JSON.parse(getContent[0].text);
-      expect(getData.id).toBe(websetId);
+  it('execute: captures console output', async () => {
+    const result = await ctx.client.callTool({
+      name: 'execute',
+      arguments: { code: 'console.log("hello from sandbox"); return "done"' },
+    });
+    expect(result.isError).toBeFalsy();
+    const content = result.content as Array<{ type: string; text: string }>;
+    const data = JSON.parse(content[0].text);
+    expect(data.result).toBe('done');
+    expect(data.logs).toContain('hello from sandbox');
+  });
 
-      // Cancel
-      const cancelResult = await ctx.client.callTool({
-        name: 'manage_websets',
-        arguments: {
-          operation: 'websets.cancel',
-          id: websetId,
-        },
-      });
-      expect(cancelResult.isError).toBeFalsy();
-    } finally {
-      // Delete (cleanup)
-      if (websetId) {
-        await ctx.client.callTool({
-          name: 'manage_websets',
-          arguments: {
-            operation: 'websets.delete',
-            id: websetId,
-          },
-        });
-      }
-    }
+  it('execute: returns error for invalid operation', async () => {
+    const result = await ctx.client.callTool({
+      name: 'execute',
+      arguments: {
+        code: 'return await callOperation("nonexistent.op", {})',
+      },
+    });
+    expect(result.isError).toBeTruthy();
+  });
+
+  it('execute: respects timeout', async () => {
+    const result = await ctx.client.callTool({
+      name: 'execute',
+      arguments: { code: 'while(true) {}', timeout: 200 },
+    });
+    expect(result.isError).toBeTruthy();
+    const content = result.content as Array<{ type: string; text: string }>;
+    expect(content[0].text).toMatch(/timed out/i);
   });
 });

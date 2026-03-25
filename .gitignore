@@ -17,3 +17,6 @@ research-workflows/workflows.db
 
 # AI reference docs (external, 10MB)
 ai_docs/
+
+# External Code Mode reference implementation
+openchatwidget/

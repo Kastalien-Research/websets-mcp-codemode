@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
-// We test the OPERATIONS registry by importing the dispatcher module indirectly.
-// Since the registry is private to manageWebsets.ts, we verify via the tool description
-// and by counting handler imports.
+// We test the OPERATIONS registry by importing the handler modules directly.
+// Since the registry is defined in operations.ts, we verify coverage by counting handler exports.
 
 import * as websets from '../websets.js';
 import * as searches from '../searches.js';

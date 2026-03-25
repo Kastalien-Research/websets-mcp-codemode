@@ -1,8 +1,6 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Exa } from 'exa-js';
 import type { OperationHandler, ToolResult } from '../handlers/types.js';
-import { createRequestLogger } from '../utils/logger.js';
 
 import * as websets from '../handlers/websets.js';
 import * as searches from '../handlers/searches.js';
@@ -17,26 +15,22 @@ import * as research from '../handlers/research.js';
 import * as exaSearch from '../handlers/exa.js';
 import { applyCompatCoercions, type AppliedCoercion, type CompatMode } from './coercion.js';
 
-// Side-effect imports: register workflows in the registry
-import '../workflows/echo.js';
-import '../workflows/qdWinnow.js';
-import '../workflows/researchDeep.js';
-import '../workflows/lifecycle.js';
-import '../workflows/adversarial.js';
-import '../workflows/convergent.js';
-import '../workflows/verifiedCollection.js';
-import '../workflows/searchAndRead.js';
-import '../workflows/expandAndCollect.js';
-import '../workflows/verifiedAnswer.js';
-import '../workflows/semanticCron.js';
+// Single barrel import for all workflow side-effect registrations
+import '../workflows/index.js';
+
+const FIELD_HINTS: Record<string, string> = {
+  entity: 'entity must be an object like {type: "company"}, not a bare string. Known types: company, person, article, research_paper, custom. For custom: {type: "custom", description: "..."}.',
+  criteria: 'criteria must be [{description: "..."}], not an array of strings.',
+  options: 'options must be [{label: "..."}] with 1-20 items, not an array of strings.',
+};
 
 // Operation metadata
-interface OperationMeta {
+export interface OperationMeta {
   handler: OperationHandler;
   summary: string;
 }
 
-const OPERATIONS: Record<string, OperationMeta> = {
+export const OPERATIONS: Record<string, OperationMeta> = {
   'websets.create': { handler: websets.create, summary: 'Create a new webset' },
   'websets.get': { handler: websets.get, summary: 'Get a webset by ID' },
   'websets.list': { handler: websets.list, summary: 'List all websets' },
@@ -99,9 +93,9 @@ const OPERATIONS: Record<string, OperationMeta> = {
   'exa.answer': { handler: exaSearch.answer, summary: 'Question answering with citations' },
 };
 
-const OPERATION_NAMES = Object.keys(OPERATIONS) as [string, ...string[]];
+export const OPERATION_NAMES = Object.keys(OPERATIONS) as [string, ...string[]];
 
-const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
+export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'websets.create': websets.Schemas.create,
   'websets.get': websets.Schemas.get,
   'websets.list': websets.Schemas.list,
@@ -164,18 +158,7 @@ const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'exa.answer': exaSearch.Schemas.answer,
 };
 
-function buildInputSchema() {
-  return z.object({
-    operation: z.enum(OPERATION_NAMES).describe('The operation to perform'),
-    args: z.record(z.string(), z.unknown()).optional().describe('Legacy operation-specific arguments envelope'),
-  }).catchall(z.unknown());
-}
-
-interface ManageWebsetsOptions {
-  defaultCompatMode?: CompatMode;
-}
-
-function withCoercionMetadata(
+export function withCoercionMetadata(
   result: ToolResult,
   coercions: AppliedCoercion[],
   warnings: string[],
@@ -228,64 +211,7 @@ function withCoercionMetadata(
   }
 }
 
-function buildToolDescription(): string {
-  return `Manage Exa Websets & Search API — unified tool for all Exa operations.
-
-Choose an operation and pass its arguments as top-level properties (preferred) or in args object (legacy).
-
-QUICK START:
-- Instant web search: exa.search
-- Find similar pages: exa.findSimilar
-- Extract page content: exa.getContents
-- Question answering with citations: exa.answer
-- Entity collection (webset): websets.create → websets.waitUntilIdle → items.getAll
-- Search + enrich + collect in one task: tasks.create type=lifecycle.harvest
-- Multi-angle triangulation: tasks.create type=convergent.search
-- Quality-diversity analysis: tasks.create type=qd.winnow (args: query, entity, criteria, enrichments, count?, selectionStrategy?, critique?)
-- Deep research question: tasks.create type=research.deep
-- Search + read pages: tasks.create type=retrieval.searchAndRead
-- Search + expand similar: tasks.create type=retrieval.expandAndCollect
-- Answer + verify: tasks.create type=retrieval.verifiedAnswer
-
-WORKFLOW GUIDE (long-running background tasks via tasks.create):
-  lifecycle.harvest — search + enrich + collect (simplest end-to-end)
-  convergent.search — N queries → deduplicate → intersection (high-confidence discovery)
-  adversarial.verify — thesis vs antithesis + optional synthesis (bias testing)
-  qd.winnow — criteria × enrichments quality-diversity analysis (advanced)
-  research.deep — Exa Research API question answering
-  research.verifiedCollection — entity collection + per-entity deep research
-  retrieval.searchAndRead — instant search + full page read (fastest retrieval workflow)
-  retrieval.expandAndCollect — search + findSimilar expansion + deduplication
-  retrieval.verifiedAnswer — answer with citations + independent source validation
-
-PARAMETER FORMAT RULES:
-- criteria: MUST be [{description: "..."}] (array of objects, NOT strings)
-- entity: MUST be {type: "company"} (object, NOT string)
-- options: MUST be [{label: "..."}] (array of objects, NOT strings)
-- cron: MUST be 5-field format "minute hour day month weekday"`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function normalizeInput(input: Record<string, unknown>): {
-  operation: string;
-  args: Record<string, unknown>;
-} {
-  const operation = String(input.operation);
-  const legacyArgs = isRecord(input.args) ? input.args : {};
-  const { operation: _operation, args: _args, ...rest } = input;
-  return {
-    operation,
-    args: {
-      ...legacyArgs,
-      ...(rest as Record<string, unknown>),
-    },
-  };
-}
-
-function formatValidationError(operation: string, issues: z.ZodIssue[]): ToolResult {
+export function formatValidationError(operation: string, issues: z.ZodIssue[]): ToolResult {
   const details = issues
     .map(issue => {
       const path = issue.path.length > 0 ? issue.path.join('.') : '(root)';
@@ -293,95 +219,77 @@ function formatValidationError(operation: string, issues: z.ZodIssue[]): ToolRes
     })
     .join('\n');
 
+  // Collect relevant field hints based on issue paths
+  const hintSet = new Set<string>();
+  for (const issue of issues) {
+    const rootField = String(issue.path[0] ?? '');
+    const hint = FIELD_HINTS[rootField];
+    if (hint) hintSet.add(hint);
+  }
+  const hintsBlock = hintSet.size > 0 ? `\n\nHints:\n${[...hintSet].map(h => `- ${h}`).join('\n')}` : '';
+
   return {
     content: [{
       type: 'text',
-      text: `Error in ${operation}: Validation failed\n${details}`,
+      text: `Error in ${operation}: Validation failed\n${details}${hintsBlock}`,
     }],
     isError: true,
   };
 }
 
-export function registerManageWebsetsTool(
-  server: McpServer,
+export async function dispatchOperation(
+  operation: string,
+  args: Record<string, unknown>,
   exa: Exa,
-  options: ManageWebsetsOptions = {},
-): void {
-  const defaultCompatMode = options.defaultCompatMode ?? 'strict';
+  compatMode: CompatMode = 'strict',
+): Promise<ToolResult> {
+  const meta = OPERATIONS[operation];
+  if (!meta) {
+    return {
+      content: [{ type: 'text' as const, text: `Unknown operation: ${operation}` }],
+      isError: true,
+    };
+  }
 
-  server.registerTool(
-    'manage_websets',
-    {
-      description: buildToolDescription(),
-      inputSchema: buildInputSchema() as any,
-    },
-    async (input: any) => {
-      const { operation, args } = normalizeInput(input as Record<string, unknown>);
-      const requestId = `manage_websets-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-      const logger = createRequestLogger(requestId, operation);
-
-      logger.start(operation);
-
-      const meta = OPERATIONS[operation];
-      if (!meta) {
-        return {
-          content: [{ type: 'text' as const, text: `Unknown operation: ${operation}` }],
-          isError: true,
-        };
-      }
-
-      const coercion = applyCompatCoercions(
-        operation,
-        (args || {}) as Record<string, unknown>,
-        defaultCompatMode,
-      );
-      const schema = OPERATION_SCHEMAS[operation];
-      const validation = schema.safeParse(coercion.args);
-      if (!validation.success) {
-        logger.error(validation.error.message);
-        const validationResult = formatValidationError(operation, validation.error.issues);
-        return withCoercionMetadata(
-          validationResult,
-          coercion.coercions,
-          coercion.warnings,
-        );
-      }
-      const validatedArgs = validation.data as Record<string, unknown>;
-
-      // Handle dry-run preview if requested via compat.preview
-      if ((coercion as any).preview) {
-        const previewResult: ToolResult = {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              preview: true,
-              operation,
-              execution: 'skipped',
-              effectiveCompatMode: (coercion as any).effectiveMode || defaultCompatMode,
-              normalizedArgs: validatedArgs,
-            }, null, 2),
-          }],
-        };
-
-        const finalPreviewResult = withCoercionMetadata(
-          previewResult,
-          coercion.coercions,
-          coercion.warnings,
-        );
-        logger.complete();
-        return finalPreviewResult;
-      }
-
-      const result = await meta.handler(validatedArgs, exa);
-      const finalResult = withCoercionMetadata(result, coercion.coercions, coercion.warnings);
-
-      if (finalResult.isError) {
-        logger.error(finalResult.content[0]?.text || 'Unknown error');
-      } else {
-        logger.complete();
-      }
-
-      return finalResult;
-    },
+  const coercion = applyCompatCoercions(
+    operation,
+    (args || {}) as Record<string, unknown>,
+    compatMode,
   );
+  const schema = OPERATION_SCHEMAS[operation];
+  const validation = schema.safeParse(coercion.args);
+  if (!validation.success) {
+    const validationResult = formatValidationError(operation, validation.error.issues);
+    return withCoercionMetadata(
+      validationResult,
+      coercion.coercions,
+      coercion.warnings,
+    );
+  }
+  const validatedArgs = validation.data as Record<string, unknown>;
+
+  // Handle dry-run preview if requested via compat.preview
+  if (coercion.preview) {
+    const previewResult: ToolResult = {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          preview: true,
+          operation,
+          execution: 'skipped',
+          effectiveCompatMode: coercion.effectiveMode || compatMode,
+          normalizedArgs: validatedArgs,
+        }, null, 2),
+      }],
+    };
+
+    return withCoercionMetadata(
+      previewResult,
+      coercion.coercions,
+      coercion.warnings,
+    );
+  }
+
+  const result = await meta.handler(validatedArgs, exa);
+  return withCoercionMetadata(result, coercion.coercions, coercion.warnings);
 }

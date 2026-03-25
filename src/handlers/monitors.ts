@@ -87,7 +87,7 @@ export const create: OperationHandler = async (args, exa) => {
     const response = await exa.websets.monitors.create(params as any);
     return successResult(projectMonitor(response as unknown as Record<string, unknown>));
   } catch (error) {
-    return errorResult('monitors.create', error);
+    return errorResult('monitors.create', error, 'Ensure websetId is valid, cron has exactly 5 fields (e.g., "0 9 * * 1"), and entity is an object like {type: "company"}.');
   }
 };
 

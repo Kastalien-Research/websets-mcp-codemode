@@ -36,6 +36,7 @@ const NUMERIC_FIELDS = new Set([
   'pollIntervalMs',
   'duration',
   'size',
+  'subpages',
 ]);
 
 const BOOLEAN_FIELDS = new Set([
@@ -48,8 +49,6 @@ const BOOLEAN_FIELDS = new Set([
   'text',
   'highlights',
   'summary',
-  'livecrawl',
-  'subpages',
 ]);
 
 function stringifyValue(value: unknown): string {

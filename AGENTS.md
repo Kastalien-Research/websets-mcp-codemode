@@ -1,40 +1,27 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+This example is a Docker-first MCP server. Treat it as an application inside the parent
+workspace, not as a standalone repo or published npm package.
 
-## Quick Reference
+## Current Ground Truth
+
+- Prefer Docker workflows first.
+- Do not assume `npx`, Claude Desktop package installs, or npm publishing flows are valid.
+- Do not assume local `.claude/skills/` content is the source of truth for agent behavior.
+- For the load-bearing server skill in this refactor, use
+  `/workspaces/openchatwidget/.agents/skills/code-mode-servers/SKILL.md`.
+
+## Practical Commands
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
+docker compose up --build
+npm run build
+npm test
 ```
 
-## Landing the Plane (Session Completion)
+## Cleanup Direction
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd sync
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-
+- Keep docs aligned with Docker-first HTTP operation.
+- Remove stale agent scaffolding instead of trying to preserve historical prompts.
+- Avoid introducing new packaging or publish assumptions until a non-Docker path is
+  intentionally designed.

@@ -82,7 +82,7 @@ export const create: OperationHandler = async (args, exa) => {
     const response = await exa.websets.create(params as any);
     return successResult(projectWebset(response as unknown as Record<string, unknown>));
   } catch (error) {
-    return errorResult('websets.create', error);
+    return errorResult('websets.create', error, 'Ensure entity is an object like {type: "company"} and criteria is [{description: "..."}]. searchQuery is required to create a search.');
   }
 };
 
@@ -95,7 +95,7 @@ export const get: OperationHandler = async (args, exa) => {
     const response = await exa.websets.get(id, expand as any);
     return successResult(projectWebset(response as unknown as Record<string, unknown>));
   } catch (error) {
-    return errorResult('websets.get', error);
+    return errorResult('websets.get', error, 'Verify the webset ID exists. Use websets.list to find valid IDs.');
   }
 };
 

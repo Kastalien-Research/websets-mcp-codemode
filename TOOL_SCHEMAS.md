@@ -1,13 +1,58 @@
 # Websets MCP Tool Schema Reference
 
-This server exposes a **single MCP tool** called `manage_websets`. Every call passes an `operation` name and an `args` object.
+This server exposes **three MCP tools**:
+
+1. **`search`** — Code Mode discovery tool: find operations by keyword/domain
+2. **`execute`** — Code Mode execution tool: run JS code with `callOperation()` in a sandbox
+3. **`status`** — Account overview: webset counts, running tasks, monitors, capabilities
+
+---
+
+## Code Mode Tools (Recommended)
+
+### `search` — Discover operations
+
+Find available operations by keyword, domain, or pattern before writing code for `execute`.
 
 ```json
 {
-  "operation": "<domain>.<action>",
-  "args": { ... }
+  "query": "create",
+  "detail": "brief",
+  "domain": "websets",
+  "limit": 10
 }
 ```
+
+**Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | string | required | Search keyword, domain name, or description |
+| `detail` | `"brief"` \| `"detailed"` \| `"full"` | `"brief"` | Level of schema detail |
+| `domain` | string | — | Filter to domain: websets, searches, items, enrichments, monitors, webhooks, imports, events, tasks, research, exa, workflow |
+| `limit` | number | 10 | Max results |
+
+### `execute` — Run code in sandbox
+
+Execute JavaScript with access to all API operations and the Exa SDK.
+
+```json
+{
+  "code": "const ws = await callOperation('websets.create', {\n  searchQuery: 'AI startups',\n  entity: { type: 'company' },\n  count: 10\n});\nawait callOperation('websets.waitUntilIdle', { id: ws.id });\nconst items = await callOperation('items.getAll', { websetId: ws.id });\nreturn items;",
+  "timeout": 60000
+}
+```
+
+**Sandbox globals:**
+- `callOperation(name, args)` — dispatch to any operation (validated + coerced)
+- `console.log/warn/error` — captured and returned with results
+
+**Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `code` | string | required | JavaScript code (runs as async function body, use `return`) |
+| `timeout` | number | 30000 | Execution timeout in ms (max 120000) |
+
+---
 
 ## Parameter Format Rules
 
@@ -20,9 +65,9 @@ This server exposes a **single MCP tool** called `manage_websets`. Every call pa
 | `options` | `[{"label": "..."}]` | `["option1"]` |
 | `cron` | `"0 9 * * 1"` (5 fields) | `"0 0 9 * * 1"` (6 fields) |
 
-### Optional Compatibility Mode (`compat.mode = "safe"`)
+### Compatibility Mode
 
-By default, validation is strict. You can opt into deterministic coercions per call:
+By default, validation uses safe mode with deterministic coercions. You can opt into strict validation per call with `compat.mode = "strict"`:
 
 ```json
 {
@@ -55,8 +100,8 @@ If coercions are applied, successful responses include `_coercions` and optional
 ### Server-Level Default Compat Mode
 
 Set `MANAGE_WEBSETS_DEFAULT_COMPAT_MODE` at server startup:
-- `strict` (default)
-- `safe`
+- `safe` (default)
+- `strict`
 
 Precedence rules:
 - Per-call `args.compat.mode` overrides server default.

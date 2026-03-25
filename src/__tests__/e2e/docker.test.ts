@@ -62,8 +62,9 @@ describe.skipIf(!HAS_DOCKER || SKIP_DOCKER || !HAS_API_KEY)('Docker E2E', () => 
     try {
       await client.connect(transport);
       const result = await client.listTools();
-      expect(result.tools).toHaveLength(1);
-      expect(result.tools[0].name).toBe('manage_websets');
+      expect(result.tools).toHaveLength(3);
+      const names = result.tools.map(t => t.name).sort();
+      expect(names).toEqual(['execute', 'search', 'status']);
     } finally {
       await client.close();
     }
