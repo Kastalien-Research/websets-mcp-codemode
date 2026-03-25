@@ -37,8 +37,10 @@
     "@modelcontextprotocol/sdk": "^1.26.x",
     "better-sqlite3": "^11.7.0",
     "cors": "^2.8.5",
+    "dedalus": "^0.0.1",
     "exa-js": "^2.3.0",
     "express": "^4.18.2",
+    "ws": "^8.20.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {
@@ -46,6 +48,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.11.24",
+    "@types/ws": "^8.18.1",
     "nodemon": "^3.0.3",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
