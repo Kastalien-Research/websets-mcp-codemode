@@ -1,4 +1,4 @@
-# schwartz13
+# Websets Code Mode MCP
 
 Docker-first MCP server for [Exa's Websets API](https://docs.exa.ai/reference/websets).
 The current runtime model is an HTTP MCP server behind Docker. It is not a published npm
