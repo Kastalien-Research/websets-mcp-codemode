@@ -416,13 +416,14 @@ async function verifyEnrichmentsWorkflow(
   const searches = webset.searches as any[] ?? [];
   const entityType = searches[0]?.entity?.type ?? 'unknown';
 
-  // Build enrichment description lookup (item enrichments are positional, no description)
+  // Build enrichment ID → description map (item enrichments carry enrichmentId, not description)
   const websetEnrichments = (webset.enrichments as Array<Record<string, unknown>> ?? []);
-  const enrichmentDescriptions: string[] = websetEnrichments.map((e: Record<string, unknown>) => {
-    const desc = (e.description as string) ?? '';
-    // Strip "Custom enrichment: " prefix if present
-    return desc.replace(/^Custom enrichment:\s*/i, '');
-  });
+  const enrichmentDescById = new Map<string, string>();
+  for (const e of websetEnrichments) {
+    const id = e.id as string;
+    const desc = ((e.description as string) ?? '').replace(/^Custom enrichment:\s*/i, '');
+    if (id && desc) enrichmentDescById.set(id, desc);
+  }
   tracker.track('load_webset', step1);
 
   if (isCancelled(taskId, store)) return null;
@@ -458,11 +459,13 @@ async function verifyEnrichmentsWorkflow(
           return { item: projectItem(item), fields: [], score: 0 };
         }
 
-        const enrichments = (item.enrichments as Array<Record<string, unknown>> ?? []).map((e, i) => ({
-          description: enrichmentDescriptions[i] ?? (e.description as string) ?? `enrichment_${i}`,
-          result: (e.result as string[] | null),
-          format: e.format as string | undefined,
-        }));
+        const enrichments = (item.enrichments as Array<Record<string, unknown>> ?? []).map((e, i) => {
+          const eid = e.enrichmentId as string | undefined;
+          const desc = (eid ? enrichmentDescById.get(eid) : null)
+            ?? (e.description as string)
+            ?? `enrichment_${i}`;
+          return { description: desc, result: (e.result as string[] | null), format: e.format as string | undefined };
+        });
 
         let fields: FieldVerification[];
         if (entityType === 'person') {

@@ -5,6 +5,7 @@ services:
       - "${PORT:-7860}:7860"
     environment:
       - EXA_API_KEY=${EXA_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - PORT=7860
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:7860/health"]
