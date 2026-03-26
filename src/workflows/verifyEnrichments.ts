@@ -10,6 +10,7 @@ import {
 } from './helpers.js';
 import { projectItem } from '../lib/projections.js';
 import { checkEmail } from '../lib/emailCheck.js';
+import { upsertItem, annotateItem } from '../store/db.js';
 
 // --- Types ---
 
@@ -472,6 +473,51 @@ async function verifyEnrichmentsWorkflow(
         const checkable = fields.filter(f => f.verdict !== 'not_checkable');
         const verified = checkable.filter(f => f.verdict === 'verified').length;
         const score = checkable.length > 0 ? verified / checkable.length : 0;
+
+        // Persist to SQLite
+        const itemId = item.id as string;
+        const props = item.properties as Record<string, unknown> | undefined;
+        const person = props?.person as Record<string, unknown> | undefined;
+        const company = props?.company as Record<string, unknown> | undefined;
+        const article = props?.article as Record<string, unknown> | undefined;
+        const itemName = (person?.name ?? company?.name ?? article?.title ?? props?.description ?? 'unknown') as string;
+        const itemUrl = (props?.url ?? '') as string;
+
+        try {
+          upsertItem({
+            id: itemId,
+            websetId,
+            name: itemName,
+            url: itemUrl,
+            entityType,
+            enrichments: item.enrichments as Record<string, unknown> | undefined,
+            evaluations: item.evaluations as unknown[] | undefined,
+          });
+
+          // Store per-field verification results
+          annotateItem(itemId, 'verification', JSON.stringify({
+            score,
+            fields: fields.map(f => ({
+              field: f.field,
+              verdict: f.verdict,
+              evidence: f.evidence,
+            })),
+          }), 'verify.enrichments');
+
+          // Mark as investigated with overall verdict
+          const contradicted = fields.filter(f => f.verdict === 'contradicted').length;
+          let judgment: string;
+          if (score >= 0.7 && contradicted === 0) {
+            judgment = 'verified';
+          } else if (contradicted > 0) {
+            judgment = `needs_review (${contradicted} contradicted)`;
+          } else {
+            judgment = `partial (${(score * 100).toFixed(0)}% verified)`;
+          }
+          annotateItem(itemId, 'judgment', judgment, 'verify.enrichments');
+        } catch {
+          // SQLite persistence is best-effort — don't fail the workflow
+        }
 
         store.updateProgress(taskId, {
           step: 'verifying',
