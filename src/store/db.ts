@@ -199,6 +199,22 @@ export function annotateItem(
   return Number(result.lastInsertRowid);
 }
 
+export function upsertAnnotation(
+  itemId: string,
+  type: string,
+  value: string,
+  source: string = 'claude',
+): number {
+  const d = getDb();
+  d.prepare(
+    'DELETE FROM annotations WHERE item_id = ? AND type = ? AND source = ?'
+  ).run(itemId, type, source);
+  const result = d.prepare(
+    'INSERT INTO annotations (item_id, type, value, source) VALUES (?, ?, ?, ?)'
+  ).run(itemId, type, value, source);
+  return Number(result.lastInsertRowid);
+}
+
 export function getUninvestigatedItems(websetId?: string): ItemRow[] {
   const d = getDb();
   if (websetId) {

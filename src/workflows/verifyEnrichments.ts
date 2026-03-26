@@ -10,7 +10,7 @@ import {
 } from './helpers.js';
 import { projectItem } from '../lib/projections.js';
 import { checkEmail } from '../lib/emailCheck.js';
-import { upsertItem, annotateItem } from '../store/db.js';
+import { upsertItem, upsertAnnotation } from '../store/db.js';
 
 // --- Types ---
 
@@ -513,7 +513,7 @@ async function verifyEnrichmentsWorkflow(
           });
 
           // Store per-field verification results
-          annotateItem(itemId, 'verification', JSON.stringify({
+          upsertAnnotation(itemId, 'verification', JSON.stringify({
             score,
             fields: fields.map(f => ({
               field: f.field,
@@ -532,7 +532,7 @@ async function verifyEnrichmentsWorkflow(
           } else {
             judgment = `partial (${(score * 100).toFixed(0)}% verified)`;
           }
-          annotateItem(itemId, 'judgment', judgment, 'verify.enrichments');
+          upsertAnnotation(itemId, 'judgment', judgment, 'verify.enrichments');
         } catch {
           // SQLite persistence is best-effort — don't fail the workflow
         }
