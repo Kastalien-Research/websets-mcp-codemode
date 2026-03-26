@@ -257,52 +257,52 @@ async function verifyPersonItem(
     }
 
     const type = classifyEnrichment(e.description);
+    let fv: FieldVerification;
     switch (type) {
       case 'github_url':
-        results.push(await verifyGitHubUrl(value, ghFetch));
+        fv = await verifyGitHubUrl(value, ghFetch);
         break;
       case 'github_repo':
-        results.push(await verifyGitHubRepo(value, ghFetch));
+        fv = await verifyGitHubRepo(value, ghFetch);
         break;
       case 'primary_language':
-        if (ghUsername) {
-          results.push(await verifyLanguage(value, ghUsername, ghFetch));
-        } else {
-          results.push(await verifyViaExa(e.description, value, `${itemName} programming language`, exa));
-        }
+        fv = ghUsername
+          ? await verifyLanguage(value, ghUsername, ghFetch)
+          : await verifyViaExa(e.description, value, `${itemName} programming language`, exa);
         break;
       case 'email':
-        results.push(await verifyEmail(value));
+        fv = await verifyEmail(value);
         break;
       case 'follower_count':
-        // Best-effort via Exa — we can't get live Twitter counts
-        results.push(await verifyViaExa(e.description, value, `${itemName} twitter followers`, exa));
+        fv = await verifyViaExa(e.description, value, `${itemName} twitter followers`, exa);
         break;
       case 'oss_status':
         if (ghUsername) {
           try {
             const user = await ghFetch(`/users/${ghUsername}`) as Record<string, unknown>;
             const repoCount = user.public_repos as number ?? 0;
-            results.push({
+            fv = {
               field: e.description,
               originalValue: value,
               verdict: repoCount > 0 ? 'verified' : 'unverified',
               evidence: `${ghUsername} has ${repoCount} public repos`,
-            });
+            };
           } catch {
-            results.push({ field: e.description, originalValue: value, verdict: 'not_checkable', evidence: 'Could not check GitHub' });
+            fv = { field: e.description, originalValue: value, verdict: 'not_checkable', evidence: 'Could not check GitHub' };
           }
         } else {
-          results.push(await verifyViaExa(e.description, value, `${itemName} open source contributions`, exa));
+          fv = await verifyViaExa(e.description, value, `${itemName} open source contributions`, exa);
         }
         break;
       case 'posted_code':
-        // Use Exa tweet search for this
-        results.push(await verifyViaExa(e.description, value, `${itemName} MCP code tweet`, exa));
+        fv = await verifyViaExa(e.description, value, `${itemName} MCP code tweet`, exa);
         break;
       default:
-        results.push(await verifyViaExa(e.description, value, itemName, exa));
+        fv = await verifyViaExa(e.description, value, itemName, exa);
     }
+    // Always use the enrichment description as the field name for consistent grouping
+    fv.field = e.description;
+    results.push(fv);
   }
 
   return results;
@@ -345,19 +345,22 @@ async function verifyCompanyItem(
     }
 
     const type = classifyEnrichment(e.description);
+    let fv: FieldVerification;
     switch (type) {
       case 'github_url':
-        results.push(await verifyGitHubUrl(value, ghFetch));
+        fv = await verifyGitHubUrl(value, ghFetch);
         break;
       case 'github_repo':
-        results.push(await verifyGitHubRepo(value, ghFetch));
+        fv = await verifyGitHubRepo(value, ghFetch);
         break;
       case 'email':
-        results.push(await verifyEmail(value));
+        fv = await verifyEmail(value);
         break;
       default:
-        results.push(await verifyViaExa(e.description, value, `${itemName} company`, exa));
+        fv = await verifyViaExa(e.description, value, `${itemName} company`, exa);
     }
+    fv.field = e.description;
+    results.push(fv);
   }
 
   return results;
@@ -380,7 +383,7 @@ async function verifyEnrichmentsWorkflow(
   if (!websetId) throw new Error('websetId is required');
 
   const maxItems = (args.maxItems as number) ?? 50;
-  const concurrency = (args.concurrency as number) ?? 3;
+  const concurrency = (args.concurrency as number) ?? 10;
   const keywords = (args.keywords as string[]) ?? ['mcp'];
 
   // Build ghFetch with optional token
@@ -407,6 +410,14 @@ async function verifyEnrichmentsWorkflow(
   const webset = await exa.websets.get(websetId) as any;
   const searches = webset.searches as any[] ?? [];
   const entityType = searches[0]?.entity?.type ?? 'unknown';
+
+  // Build enrichment description lookup (item enrichments are positional, no description)
+  const websetEnrichments = (webset.enrichments as Array<Record<string, unknown>> ?? []);
+  const enrichmentDescriptions: string[] = websetEnrichments.map((e: Record<string, unknown>) => {
+    const desc = (e.description as string) ?? '';
+    // Strip "Custom enrichment: " prefix if present
+    return desc.replace(/^Custom enrichment:\s*/i, '');
+  });
   tracker.track('load_webset', step1);
 
   if (isCancelled(taskId, store)) return null;
@@ -442,8 +453,8 @@ async function verifyEnrichmentsWorkflow(
           return { item: projectItem(item), fields: [], score: 0 };
         }
 
-        const enrichments = (item.enrichments as Array<Record<string, unknown>> ?? []).map(e => ({
-          description: (e.description as string) ?? '',
+        const enrichments = (item.enrichments as Array<Record<string, unknown>> ?? []).map((e, i) => ({
+          description: enrichmentDescriptions[i] ?? (e.description as string) ?? `enrichment_${i}`,
           result: (e.result as string[] | null),
           format: e.format as string | undefined,
         }));
@@ -463,7 +474,9 @@ async function verifyEnrichmentsWorkflow(
             if (!value) {
               fields.push({ field: e.description, originalValue: null, verdict: 'not_checkable', evidence: 'No value' });
             } else if (classifyEnrichment(e.description) === 'email') {
-              fields.push(await verifyEmail(value));
+              const fv = await verifyEmail(value);
+              fv.field = e.description;
+              fields.push(fv);
             } else {
               fields.push(await verifyViaExa(e.description, value, itemName, exa));
             }
@@ -476,19 +489,19 @@ async function verifyEnrichmentsWorkflow(
 
         // Persist to SQLite
         const itemId = item.id as string;
-        const props = item.properties as Record<string, unknown> | undefined;
-        const person = props?.person as Record<string, unknown> | undefined;
-        const company = props?.company as Record<string, unknown> | undefined;
-        const article = props?.article as Record<string, unknown> | undefined;
-        const itemName = (person?.name ?? company?.name ?? article?.title ?? props?.description ?? 'unknown') as string;
-        const itemUrl = (props?.url ?? '') as string;
+        const itemProps = item.properties as Record<string, unknown> | undefined;
+        const person = itemProps?.person as Record<string, unknown> | undefined;
+        const company = itemProps?.company as Record<string, unknown> | undefined;
+        const article = itemProps?.article as Record<string, unknown> | undefined;
+        const persistName = (person?.name ?? company?.name ?? article?.title ?? itemProps?.description ?? 'unknown') as string;
+        const persistUrl = (itemProps?.url ?? '') as string;
 
         try {
           upsertItem({
             id: itemId,
             websetId,
-            name: itemName,
-            url: itemUrl,
+            name: persistName,
+            url: persistUrl,
             entityType,
             enrichments: item.enrichments as Record<string, unknown> | undefined,
             evaluations: item.evaluations as unknown[] | undefined,
