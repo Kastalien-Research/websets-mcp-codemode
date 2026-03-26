@@ -43,15 +43,20 @@ function parseGitHubUsername(url: string): string | null {
 }
 
 function parseGitHubRepo(url: string): { owner: string; repo: string } | null {
+  // Try full URL first
   try {
     const u = new URL(url);
-    if (!u.hostname.includes('github.com')) return null;
-    const parts = u.pathname.split('/').filter(Boolean);
-    if (parts.length < 2) return null;
-    return { owner: parts[0], repo: parts[1] };
+    if (u.hostname.includes('github.com')) {
+      const parts = u.pathname.split('/').filter(Boolean);
+      if (parts.length >= 2) return { owner: parts[0], repo: parts[1] };
+    }
   } catch {
-    return null;
+    // Not a URL — try owner/repo format
   }
+  // Match bare "owner/repo" format (e.g. "QuantGeekDev/mcp-framework")
+  const match = url.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/);
+  if (match) return { owner: match[1], repo: match[2] };
+  return null;
 }
 
 // --- Verification strategies per enrichment type ---
