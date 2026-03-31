@@ -1,0 +1,19 @@
+{
+  "name": "linear-channel",
+  "version": "0.1.0",
+  "description": "Linear two-way channel for Claude Code — issue events, state transitions, comments",
+  "type": "module",
+  "scripts": {
+    "build": "tsc && chmod 755 build/channel.js",
+    "channel": "npm install --no-audit --no-fund && npm run build && node build/channel.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.0.1",
+    "typescript": "^5.8.3"
+  }
+}

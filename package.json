@@ -31,7 +31,8 @@
     "test:workflows": "vitest run src/workflows/__tests__/",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
-    "db:init": "bash research-workflows/init-db.sh"
+    "db:init": "bash research-workflows/init-db.sh",
+    "channel": "npm run build && node dist/channel.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.x",

@@ -1,0 +1,17 @@
+{
+  "name": "websets",
+  "description": "Websets webhook channel for Claude Code — receive Exa Webset events (new items, enrichments, idle notifications) and react with full codebase context.",
+  "version": "1.0.0",
+  "keywords": ["websets", "exa", "channel", "webhook", "mcp"],
+  "mcpServers": {
+    "websets-channel": {
+      "command": "npm",
+      "args": ["--prefix", "${CLAUDE_PLUGIN_ROOT}", "run", "channel"]
+    }
+  },
+  "channels": {
+    "websets-channel": {
+      "server": "websets-channel"
+    }
+  }
+}

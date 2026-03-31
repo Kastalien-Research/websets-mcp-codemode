@@ -26,65 +26,53 @@ const server = new Server(
   { item and enrichment data }
 </channel>
 
-## How to react by event type
+## Dispatch Protocol
+
+When a channel event arrives, follow this protocol:
+
+1. **Read the workflow config**: Use the Read tool on /workspaces/schwartz13/data/workflow-configs.json
+2. **Look up the webset_id** in config.routes
+3. **If a matching route exists**:
+   a. Check if the event_type matches any key in the route's "on" map
+   b. If the route's event entry has a "gate", evaluate it against the event payload
+   c. If the gate passes (or no gate exists), execute the steps in order
+   d. Between steps, check each step's "gate_output" from config.steps — stop the chain if the gate fails
+   e. Substitute {{variable}} placeholders using: event payload fields (webset_id, entity_name, event_type, score), route-level params, and prior step results ({{steps.<step_id>.<field>}})
+4. **If no matching route exists**, use the default behavior below
+
+## Step Execution
+
+Look up each step name in config.steps to get its definition:
+
+- **server-workflow**: Use the websets MCP execute tool:
+  callOperation('tasks.create', { type: step.workflow, args: merged_params })
+  Then poll with callOperation('tasks.get', { taskId }) until complete.
+
+- **mcp-execute**: Use the specified MCP server's execute tool with the params.
+
+- **channel-tool**: Call the specified channel's tool (e.g., gmail reply, draft_for_review).
+
+- **notify**: Report the message to the user. No tool call needed.
+
+After each step, if the step definition has gate_output, evaluate it against the step's result. If the gate fails, stop the chain and report which step failed and why.
+
+## Default Behavior (no config match)
 
 ### NEW_OPPORTUNITY_CANDIDATE events
+Route by score: claim_and_research (>=10) → run /verify-item then /deep-research-item skills. queue_for_review (7-9) → summarize for user. monitor (<7) → log briefly.
 
-When event_type is **NEW_OPPORTUNITY_CANDIDATE**, the payload contains a scored company candidate from the design-partner radar:
+### webset.item.created / webset.item.enriched
+Log the entity. Use websets MCP (search + execute) for further research if interesting.
 
-- **claim_and_research** (score >= 10): This is a high-priority candidate. Immediately run the research workflow:
-  1. Use exa.search to verify the signal and gather context
-  2. Use exa.getContents on the primary URL for full evidence
-  3. Run parallel subagent searches: signal verification, buyer mapping, angle building
-  4. Store the research brief via store.saveVerdict
-  5. Report findings to the user with recommended action
+### webset.idle
+Report to user. Run store.listUninvestigated and store.listCandidates for pipeline status.
 
-- **queue_for_review** (score 7-9): Log the candidate for the user's review. Summarize the lens hits and score components. Do not auto-research unless the user requests it.
+## Available MCP Operations
 
-- **monitor** (score < 7): Log the detection briefly. No action needed unless the user asks.
-
-### webset.item.created / webset.item.enriched events
-
-For raw item events (not already processed into candidates):
-1. Read the entity name and enrichment values from the event payload
-2. Use the websets MCP server (search + execute tools) to research the entity further
-3. Launch parallel searches for context:
-   - exa.search for news, analysis, and background
-   - exa.getContents to read full pages from the item's URL
-   - exa.findSimilar to discover related entities
-4. After researching, annotate the item in the local store:
-   - store.annotate with type "judgment" and your assessment
-   - store.annotate with type "research_finding" for key discoveries
-5. Synthesize findings and report to the user
-
-### webset.idle events
-
-The webset has finished populating. Report this to the user and:
-- Run store.listUninvestigated to see which items haven't been researched yet
-- Run store.listCandidates to show the current pipeline status
-- Consider triggering a semantic.cron evaluation if this is part of a composite signal setup
-
-You can spin up multiple subagent searches in parallel — the Exa search API is
-stateless and session-independent. The webset continues populating while you research.
-
-## Available tools on the websets MCP server
-
-- execute: Run JS code with callOperation() for any Exa API operation
-- search: Discover available operations by keyword
-- status: Check webset counts and server state
-
-## Key operations for research
-
-- exa.search(query, opts) — instant web search with category/date/domain filters
-- exa.findSimilar(url) — find pages similar to a URL
-- exa.getContents(urls) — extract text/highlights/summary from URLs
-- exa.answer(query) — question answering with citations
-- store.annotate(itemId, type, value) — annotate item in local store
-- store.getItem(itemId) — get item with all annotations
-- store.listUninvestigated(websetId?) — items needing research
-- store.upsertCompany(domain, name) — create or update company record
-- store.getCompany(domain) — get company with lens hits, score, and verdict
-- store.listCandidates(minScore?, verdict?) — list candidate companies`,
+- execute: Run JS with callOperation() for any Exa/store operation
+- search: Discover operations by keyword
+- status: Server state overview
+- Key operations: exa.search, exa.findSimilar, exa.getContents, exa.answer, store.annotate, store.getItem, store.listUninvestigated, store.listCandidates`,
   },
 );
 

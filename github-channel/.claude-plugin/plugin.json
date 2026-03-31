@@ -1,0 +1,21 @@
+{
+  "name": "github",
+  "description": "GitHub one-way channel for Claude Code — PR events, CI status, issues, reviews, pushes, releases.",
+  "version": "0.1.0",
+  "mcpServers": {
+    "github-channel": {
+      "command": "npm",
+      "args": ["--prefix", "${CLAUDE_PLUGIN_ROOT}", "run", "channel"]
+    }
+  },
+  "channels": {
+    "github-channel": { "server": "github-channel" }
+  },
+  "userConfig": {
+    "GITHUB_WEBHOOK_SECRET": {
+      "description": "GitHub webhook secret for signature verification",
+      "required": false,
+      "sensitive": true
+    }
+  }
+}

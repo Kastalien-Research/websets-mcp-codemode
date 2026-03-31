@@ -1,0 +1,26 @@
+{
+  "name": "linear",
+  "description": "Linear two-way channel for Claude Code — issue events, state transitions, comments, assignments. Tools for commenting, transitioning, assigning, and creating issues.",
+  "version": "0.1.0",
+  "mcpServers": {
+    "linear-channel": {
+      "command": "npm",
+      "args": ["--prefix", "${CLAUDE_PLUGIN_ROOT}", "run", "channel"]
+    }
+  },
+  "channels": {
+    "linear-channel": { "server": "linear-channel" }
+  },
+  "userConfig": {
+    "LINEAR_API_KEY": {
+      "description": "Linear API key",
+      "required": true,
+      "sensitive": true
+    },
+    "LINEAR_WEBHOOK_SECRET": {
+      "description": "Linear webhook signing secret (optional, for signature verification)",
+      "required": false,
+      "sensitive": true
+    }
+  }
+}
