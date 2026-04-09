@@ -14,3 +14,41 @@ services:
       retries: 3
       start_period: 5s
     restart: unless-stopped
+
+  google-workspace-mcp:
+    build: ./servers/google-workspace-mcp
+    ports:
+      - "3000:3000"
+    environment:
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REFRESH_TOKEN=${GOOGLE_REFRESH_TOKEN}
+      - HOST=0.0.0.0
+      - PORT=3000
+    restart: unless-stopped
+
+  airtable-mcp:
+    build: ./servers/effect-airtable-mcp
+    ports:
+      - "3500:3500"
+    environment:
+      - AIRTABLE_API_KEY=${AIRTABLE_API_KEY}
+      - HOST=0.0.0.0
+      - PORT=3500
+    restart: unless-stopped
+
+  thoughtbox-gateway:
+    build: ./servers/thoughtbox-gateway
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./servers/thoughtbox-gateway/.env
+    environment:
+      - PORT=8000
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
