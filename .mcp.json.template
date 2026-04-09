@@ -1,0 +1,70 @@
+{
+  "mcpServers": {
+    "schwartz13-local": {
+      "type": "http",
+      "url": "http://localhost:7860/mcp"
+    },
+    "websets-channel": {
+      "command": "node",
+      "args": ["dist/channel.js"],
+      "env": {
+        "WEBSETS_SERVER_URL": "http://localhost:7860"
+      }
+    },
+    "google-workspace": {
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
+    },
+    "google-workspace-channel": {
+      "command": "node",
+      "args": ["servers/google-workspace-mcp/build/index.js", "--channel"],
+      "env": {
+        "GOOGLE_CLIENT_ID": "<YOUR_GOOGLE_CLIENT_ID>",
+        "GOOGLE_CLIENT_SECRET": "<YOUR_GOOGLE_CLIENT_SECRET>",
+        "GOOGLE_REFRESH_TOKEN": "<YOUR_GOOGLE_REFRESH_TOKEN>",
+        "GOOGLE_PUBSUB_TOPIC": "<YOUR_PUBSUB_TOPIC>",
+        "CHANNEL_HOST": "0.0.0.0"
+      }
+    },
+    "thoughtbox": {
+      "type": "http",
+      "url": "https://mcp.kastalienresearch.ai/mcp?key=<YOUR_THOUGHTBOX_API_KEY>"
+    },
+    "thoughtbox-gateway": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp"
+    },
+    "airtable": {
+      "type": "http",
+      "url": "http://localhost:3500/mcp"
+    },
+    "github-channel": {
+      "command": "node",
+      "args": ["servers/github-channel/build/channel.js"],
+      "env": {
+        "CHANNEL_HOST": "0.0.0.0",
+        "CHANNEL_PORT": "3003"
+      }
+    },
+    "linear-channel": {
+      "command": "node",
+      "args": ["servers/linear-channel/build/channel.js"],
+      "env": {
+        "LINEAR_API_KEY": "<YOUR_LINEAR_API_KEY>",
+        "CHANNEL_HOST": "0.0.0.0",
+        "CHANNEL_PORT": "3004"
+      }
+    },
+    "airtable-channel": {
+      "command": "node",
+      "args": ["servers/effect-airtable-mcp/build/channel.js"],
+      "env": {
+        "AIRTABLE_API_KEY": "<YOUR_AIRTABLE_API_KEY>",
+        "AIRTABLE_WATCH_BASES": "<YOUR_AIRTABLE_BASE_IDS>",
+        "AIRTABLE_WEBHOOK_URL": "<YOUR_CODESPACE_WEBHOOK_URL>",
+        "CHANNEL_HOST": "0.0.0.0",
+        "CHANNEL_PORT": "3002"
+      }
+    }
+  }
+}
