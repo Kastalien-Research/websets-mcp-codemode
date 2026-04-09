@@ -1,0 +1,33 @@
+{
+  "forwardPorts": [3001, 3002, 3003, 3004, 3500, 7860, 8000],
+  "portsAttributes": {
+    "3001": { "visibility": "public", "label": "Gmail webhook (Pub/Sub push)" },
+    "3002": { "visibility": "public", "label": "Airtable webhook" },
+    "3003": { "visibility": "public", "label": "GitHub webhook" },
+    "3004": { "visibility": "public", "label": "Linear webhook" },
+    "3500": { "label": "Airtable Code Mode server" },
+    "7860": { "visibility": "public", "label": "Websets MCP server (webhooks)" },
+    "8000": { "label": "Thoughtbox Gateway" }
+  },
+
+  "postCreateCommand": {
+    "root": "npm ci",
+    "github-channel": "cd servers/github-channel && npm ci",
+    "linear-channel": "cd servers/linear-channel && npm ci",
+    "effect-airtable": "cd servers/effect-airtable-mcp && npm ci",
+    "agentmail": "cd servers/agentmail-mcp-codemode && npm ci",
+    "google-workspace": "cd servers/google-workspace-mcp && npm ci",
+    "thoughtbox-gateway": "cd servers/thoughtbox-gateway && npm ci"
+  },
+
+  "postStartCommand": {
+    "build-root": "npm run build",
+    "build-github": "cd servers/github-channel && npm run build",
+    "build-linear": "cd servers/linear-channel && npm run build",
+    "build-airtable": "cd servers/effect-airtable-mcp && npm run build",
+    "build-agentmail": "cd servers/agentmail-mcp-codemode && npm run build",
+    "build-gworkspace": "cd servers/google-workspace-mcp && npm run build",
+    "build-thoughtbox": "cd servers/thoughtbox-gateway && npm run build",
+    "docker-up": "docker compose up -d --build"
+  }
+}
