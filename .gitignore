@@ -26,6 +26,7 @@ keyfile.json
 
 # Subprojects (independent builds — cloned, not authored here)
 google_workspace_mcp/
-google-workspace-mcp-codemode/
-agentmail-mcp-codemode/
-effect-airtable-mcp/
+servers/google-workspace-mcp/
+servers/agentmail-mcp-codemode/
+servers/effect-airtable-mcp/
+servers/thoughtbox-gateway/
