@@ -1,12 +1,15 @@
 #!/usr/bin/env node
-// Channel bridge: subscribes to the main server's webhook event stream
+// Channel bridge: subscribes to the websets server's webhook event stream
 // and pushes notifications into the Claude Code session.
 //
-// Claude Code spawns this as a subprocess via .mcp.json:
-//   "websets-channel": { "command": "node", "args": ["dist/channel.js"] }
+// Claude Code spawns this as a subprocess via .claude-plugin/plugin.json:
+//   "websets-channel": { "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/channel.js"] }
 //
-// Start Claude Code with:
-//   claude --dangerously-load-development-channels server:websets-channel
+// During the channels research preview, launch Claude Code with:
+//   claude --dangerously-load-development-channels plugin:websets@<marketplace>
+//
+// WEBSETS_SERVER_URL points at the in-process webhook listener started by
+// dist/stdio.js (default http://localhost:7860).
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -30,7 +33,7 @@ const server = new Server(
 
 When a channel event arrives, follow this protocol:
 
-1. **Read the workflow config**: Use the Read tool on /workspaces/schwartz13/data/workflow-configs.json
+1. **Read the workflow config**: Use the Read tool on \${CLAUDE_PLUGIN_DATA}/workflow-configs.json (or wherever the user has configured one). If no config exists, fall through to the default behavior below.
 2. **Look up the webset_id** in config.routes
 3. **If a matching route exists**:
    a. Check if the event_type matches any key in the route's "on" map

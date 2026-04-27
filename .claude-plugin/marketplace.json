@@ -1,0 +1,14 @@
+{
+  "name": "websets-mcp-codemode",
+  "owner": {
+    "name": "Kastalien Research"
+  },
+  "plugins": [
+    {
+      "name": "websets",
+      "source": "./",
+      "description": "Exa Websets for Claude Code — full MCP server (search/execute/status, 110 ops, 12 workflows, SQLite shadow store, webhook receiver) plus a realtime channel that pushes Webset events into your session.",
+      "version": "1.0.0"
+    }
+  ]
+}

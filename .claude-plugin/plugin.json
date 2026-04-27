@@ -1,17 +1,69 @@
 {
   "name": "websets",
-  "description": "Websets webhook channel for Claude Code — receive Exa Webset events (new items, enrichments, idle notifications) and react with full codebase context.",
   "version": "1.0.0",
-  "keywords": ["websets", "exa", "channel", "webhook", "mcp"],
+  "description": "Exa Websets for Claude Code — full MCP server (search/execute/status, 110 ops, 12 workflows, SQLite shadow store, webhook receiver) plus a realtime channel that pushes Webset events into your session.",
+  "keywords": ["websets", "exa", "channel", "webhook", "mcp", "search", "enrichment"],
+  "author": {
+    "name": "Kastalien Research"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/Kastalien-Research/websets-mcp-codemode",
+  "repository": "https://github.com/Kastalien-Research/websets-mcp-codemode",
   "mcpServers": {
+    "websets": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/stdio.js"],
+      "env": {
+        "EXA_API_KEY": "${user_config.exa_api_key}",
+        "EXA_WEBHOOK_SECRET": "${user_config.exa_webhook_secret}",
+        "WEBSETS_HTTP_PORT": "${user_config.websets_http_port}",
+        "WEBSETS_DB_PATH": "${user_config.websets_db_path}",
+        "MANAGE_WEBSETS_DEFAULT_COMPAT_MODE": "${user_config.compat_mode}"
+      }
+    },
     "websets-channel": {
-      "command": "npm",
-      "args": ["--prefix", "${CLAUDE_PLUGIN_ROOT}", "run", "channel"]
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/channel.js"],
+      "env": {
+        "WEBSETS_SERVER_URL": "http://localhost:${user_config.websets_http_port}"
+      }
     }
   },
-  "channels": {
-    "websets-channel": {
-      "server": "websets-channel"
+  "channels": [
+    { "server": "websets-channel" }
+  ],
+  "userConfig": {
+    "exa_api_key": {
+      "type": "string",
+      "title": "Exa API key",
+      "description": "Required. Get one at https://dashboard.exa.ai. Stored in your system keychain.",
+      "required": true,
+      "sensitive": true
+    },
+    "exa_webhook_secret": {
+      "type": "string",
+      "title": "Exa webhook secret",
+      "description": "Optional HMAC secret for verifying inbound Exa webhook signatures (Exa-Signature header). Leave blank to skip signature verification.",
+      "required": false,
+      "sensitive": true
+    },
+    "websets_http_port": {
+      "type": "number",
+      "title": "Webhook listener port",
+      "description": "Local TCP port the websets process binds for /webhooks/exa intake and /webhooks/events SSE. The channel reads this same port. Change if 7860 is taken.",
+      "default": 7860
+    },
+    "websets_db_path": {
+      "type": "string",
+      "title": "SQLite database path",
+      "description": "Path to the local Websets shadow store (items, annotations, events, companies). Defaults to the plugin's persistent data directory.",
+      "default": "${CLAUDE_PLUGIN_DATA}/websets.db"
+    },
+    "compat_mode": {
+      "type": "string",
+      "title": "Operation compat mode",
+      "description": "How strictly callOperation() coerces arguments. 'safe' is forgiving; 'strict' rejects ambiguous inputs.",
+      "default": "safe"
     }
   }
 }

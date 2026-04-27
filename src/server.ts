@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import type { Server as HttpServer } from "node:http";
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -10,6 +11,55 @@ import { registerWorkflowMcp } from "./workflows/mcp.js";
 import { createWebhookRouter } from "./webhooks/receiver.js";
 import { initDAuth, protectedResourceMetadata, requireDAuth } from "./auth/dauth.js";
 import type { Express, Request, Response } from "express";
+
+const SERVER_NAME = "websets-server";
+const SERVER_VERSION = "2.0.0";
+
+function buildMcpServer(exa: Exa, defaultCompatMode: 'safe' | 'strict'): McpServer {
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  registerSearchTool(server);
+  registerExecuteTool(server, exa, { defaultCompatMode });
+  registerStatusTool(server, exa, { defaultCompatMode });
+  registerWorkflowMcp(server);
+  return server;
+}
+
+/**
+ * Build a fully-configured McpServer for stdio transport (plugin install path).
+ * Caller is responsible for connecting it to a transport.
+ */
+export function createMcpServer(config: {
+  exaApiKey: string;
+  defaultCompatMode?: 'safe' | 'strict';
+}): McpServer {
+  const exa = new Exa(config.exaApiKey || 'dummy-key-for-testing');
+  return buildMcpServer(exa, config.defaultCompatMode ?? 'safe');
+}
+
+/**
+ * Start a minimal Express listener that exposes the webhook receiver routes
+ * (/health, /webhooks/exa, /webhooks/events, /webhooks/status). Used by the
+ * stdio entrypoint so the channel can subscribe via SSE on localhost.
+ */
+export function startWebhookListener(opts: {
+  port?: number;
+  secret?: string;
+}): { httpServer: HttpServer; port: number } {
+  const app = express();
+  app.use(express.json({
+    verify: (req, _res, buf) => {
+      (req as any).__rawBody = buf;
+    },
+  }));
+  app.get('/health', (_req: Request, res: Response) => {
+    res.json({ status: 'ok' });
+  });
+  app.use(createWebhookRouter(opts.secret));
+
+  const port = opts.port ?? 7860;
+  const httpServer = app.listen(port);
+  return { httpServer, port };
+}
 
 export interface ServerConfig {
   exaApiKey: string;
@@ -159,24 +209,12 @@ export function createServer(config: ServerConfig): ServerInstance {
       pendingSessions.add(newSessionId);
 
       try {
-        const server = new McpServer({
-          name: "websets-server",
-          version: "2.0.0"
-        });
+        const server = buildMcpServer(exa, config.defaultCompatMode ?? 'safe');
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => newSessionId,
           enableJsonResponse: true,
         });
-
-        registerSearchTool(server);
-        registerExecuteTool(server, exa, {
-          defaultCompatMode: config.defaultCompatMode ?? 'safe',
-        });
-        registerStatusTool(server, exa, {
-          defaultCompatMode: config.defaultCompatMode ?? 'safe',
-        });
-        registerWorkflowMcp(server);
 
         transport.onclose = () => {
           const entry = sessions.get(transport.sessionId || newSessionId);

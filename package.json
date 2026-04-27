@@ -1,8 +1,8 @@
 {
-  "name": "schwartz13",
+  "name": "websets-mcp-codemode",
   "version": "1.0.0",
   "private": true,
-  "description": "Docker-first MCP server for Exa Websets API. Create, manage, and enrich collections of web entities (companies, people, papers) with automated search, enrichments, and monitoring capabilities.",
+  "description": "Exa Websets MCP server packaged as a Claude Code plugin. Code-mode tools (search/execute/status), 110 operations across 12 domains, 12 background workflows, SQLite shadow store, and a realtime channel for Webset webhook events.",
   "type": "module",
   "module": "./src/index.ts",
   "keywords": [
@@ -10,6 +10,8 @@
     "model context protocol",
     "exa",
     "websets",
+    "claude-code-plugin",
+    "channel",
     "data enrichment",
     "web scraping",
     "entity extraction",
@@ -17,13 +19,15 @@
     "claude",
     "ai"
   ],
-  "author": "Exa Labs",
+  "author": "Kastalien Research",
   "scripts": {
-    "build": "tsc && chmod +x dist/index.js",
+    "build": "tsc && chmod +x dist/index.js dist/stdio.js dist/channel.js",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
+    "stdio": "node dist/stdio.js",
+    "channel": "node dist/channel.js",
     "dev": "tsc --watch & nodemon dist/index.js",
-    "inspector": "npx @modelcontextprotocol/inspector dist/index.js",
+    "inspector": "npx @modelcontextprotocol/inspector dist/stdio.js",
     "test": "vitest run",
     "test:unit": "vitest run src/handlers/__tests__/{registry,enrichments,monitors,types}.test.ts",
     "test:integration": "vitest run src/handlers/__tests__/integration/",
@@ -31,14 +35,12 @@
     "test:workflows": "vitest run src/workflows/__tests__/",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
-    "db:init": "bash research-workflows/init-db.sh",
-    "channel": "npm run build && node dist/channel.js"
+    "db:init": "bash research-workflows/init-db.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.x",
     "better-sqlite3": "^11.7.0",
     "cors": "^2.8.5",
-    "dedalus": "^0.0.1",
     "exa-js": "^2.3.0",
     "express": "^4.18.2",
     "jose": "^6.2.2",
