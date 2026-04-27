@@ -40,9 +40,15 @@ export function createMcpServer(config: {
  * Start a minimal Express listener that exposes the webhook receiver routes
  * (/health, /webhooks/exa, /webhooks/events, /webhooks/status). Used by the
  * stdio entrypoint so the channel can subscribe via SSE on localhost.
+ *
+ * Defaults to binding on 127.0.0.1: signature verification is optional, and
+ * the SSE stream forwards events directly into the user's Claude session,
+ * so a public bind would let anyone on the network inject fake events.
+ * Pass `host: '0.0.0.0'` explicitly when running behind Docker / a proxy.
  */
 export function startWebhookListener(opts: {
   port?: number;
+  host?: string;
   secret?: string;
 }): { httpServer: HttpServer; port: number } {
   const app = express();
@@ -57,7 +63,8 @@ export function startWebhookListener(opts: {
   app.use(createWebhookRouter(opts.secret));
 
   const port = opts.port ?? 7860;
-  const httpServer = app.listen(port);
+  const host = opts.host ?? '127.0.0.1';
+  const httpServer = app.listen(port, host);
   return { httpServer, port };
 }
 

@@ -6,6 +6,7 @@ services:
     environment:
       - EXA_API_KEY=${EXA_API_KEY}
       - EXA_WEBHOOK_SECRET=${EXA_WEBHOOK_SECRET:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - PORT=7860
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:7860/health"]

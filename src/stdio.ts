@@ -26,14 +26,22 @@ if (Number.isNaN(port)) {
   process.exit(1);
 }
 
+// Default to loopback. Webhook signature verification is optional, and the
+// channel forwards events directly into the active Claude session — binding
+// publicly would let anyone on the network inject fake events. Set
+// WEBSETS_HTTP_HOST=0.0.0.0 only if you front this with a reverse proxy that
+// performs its own auth (or have set EXA_WEBHOOK_SECRET).
+const host = process.env.WEBSETS_HTTP_HOST ?? "127.0.0.1";
+
 const { httpServer, port: actualPort } = startWebhookListener({
   port,
+  host,
   secret: process.env.EXA_WEBHOOK_SECRET,
 });
 
 httpServer.on("listening", () => {
   console.error(
-    `[websets-stdio] webhook listener on http://localhost:${actualPort}/webhooks/*`,
+    `[websets-stdio] webhook listener on http://${host}:${actualPort}/webhooks/*`,
   );
 });
 
