@@ -25,7 +25,7 @@
       "command": "node",
       "args": ["${CLAUDE_PLUGIN_ROOT}/dist/channel.js"],
       "env": {
-        "WEBSETS_SERVER_URL": "http://localhost:${user_config.websets_http_port}"
+        "WEBSETS_SERVER_URL": "http://127.0.0.1:${user_config.websets_http_port}"
       }
     }
   },
