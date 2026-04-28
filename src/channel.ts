@@ -78,6 +78,26 @@ Report to user. Run store.listUninvestigated and store.listCandidates for pipeli
 
 await server.connect(new StdioServerTransport());
 
+// --- Notification queueing: dedup-by-event-id + per-item coalescing ---
+// Two problems addressed here:
+//   1. Duplicate event delivery: same event_id arriving twice (likely from
+//      doubled SSE subscribers after reconnects). Dedup by event_id.
+//   2. Volume: every enrichment increment fires a notification. Coalesce
+//      per item.id with a short debounce so we emit one notification per
+//      item once its enrichments have settled.
+type ChannelEvent = {
+  id: string;
+  type: string;
+  payload: Record<string, unknown>;
+};
+
+const recentEventIds = new Map<string, number>();
+const EVENT_DEDUP_WINDOW_MS = 60_000;
+
+const itemCoalesceTimers = new Map<string, NodeJS.Timeout>();
+const itemLatestEvent = new Map<string, ChannelEvent>();
+const ITEM_COALESCE_DELAY_MS = 5_000;
+
 // Subscribe to the main server's webhook event stream
 connectSSE();
 
@@ -127,11 +147,49 @@ async function connectSSE(): Promise<void> {
   }
 }
 
-async function pushChannelNotification(event: {
-  id: string;
-  type: string;
-  payload: Record<string, unknown>;
-}): Promise<void> {
+async function pushChannelNotification(event: ChannelEvent): Promise<void> {
+  // 1. Dedup by event_id — same event delivered twice is a known duplication
+  //    (likely from doubled SSE subscribers). Drop the second copy.
+  if (recentEventIds.has(event.id)) return;
+  const now = Date.now();
+  recentEventIds.set(event.id, now);
+  // Garbage-collect old entries
+  if (recentEventIds.size > 1000) {
+    for (const [id, ts] of recentEventIds) {
+      if (now - ts > EVENT_DEDUP_WINDOW_MS) recentEventIds.delete(id);
+    }
+  }
+
+  // 2. Coalesce per-item updates. webset.item.created and webset.item.enriched
+  //    can fire many times for the same item as enrichments complete. Debounce
+  //    so the user sees one notification per item, with the latest state, after
+  //    enrichment activity settles.
+  if (
+    event.type === 'webset.item.created' ||
+    event.type === 'webset.item.enriched'
+  ) {
+    const data = (event.payload?.data ?? {}) as Record<string, unknown>;
+    const itemId = data.id as string | undefined;
+    if (itemId) {
+      itemLatestEvent.set(itemId, event);
+      const existing = itemCoalesceTimers.get(itemId);
+      if (existing) clearTimeout(existing);
+      const timer = setTimeout(() => {
+        itemCoalesceTimers.delete(itemId);
+        const finalEvent = itemLatestEvent.get(itemId);
+        itemLatestEvent.delete(itemId);
+        if (finalEvent) void emitNotification(finalEvent);
+      }, ITEM_COALESCE_DELAY_MS);
+      itemCoalesceTimers.set(itemId, timer);
+      return;
+    }
+  }
+
+  // Non-item events (e.g. webset.idle, NEW_OPPORTUNITY_CANDIDATE) emit immediately.
+  await emitNotification(event);
+}
+
+async function emitNotification(event: ChannelEvent): Promise<void> {
   const data = (event.payload?.data ?? {}) as Record<string, unknown>;
   const props = (data.properties ?? {}) as Record<string, unknown>;
 
