@@ -6,7 +6,11 @@ dist/
 .DS_Store
 .mcp.json
 research-workflows/workflows.db
-data/
+
+# Persisted state (SQLite, runtime artifacts) — but keep tracked configs
+data/*
+!data/*.json
+!data/.gitkeep
 
 # Claude Code runtime state
 .claude/state/

@@ -1,0 +1,191 @@
+{
+  "routes": {
+    "model-drift-monitor": {
+      "name": "Model behavior drift monitor — fire alert",
+      "channel": "websets-channel",
+      "match": {
+        "event_type": "semantic-cron.signal-fired",
+        "config_name": "model-drift-monitor"
+      },
+      "on": {
+        "semantic-cron.signal-fired": {
+          "steps": ["draft-incident-summary", "notify-user"],
+          "params": {
+            "message": "🔥 model-drift-monitor fired — {{reason}} — entities: {{joined_entities}}. See drafted incident summary above for assembled evidence (Twitter complaints + GitHub issues + provider acknowledgment status)."
+          }
+        },
+        "semantic-cron.signal-resolved": {
+          "steps": ["notify-user"],
+          "params": {
+            "message": "✅ model-drift-monitor resolved — {{lost_entities}} no longer firing. Provider has likely shipped a fix and/or community discourse has subsided."
+          }
+        }
+      }
+    },
+    "webset_01kn2jaampjxn9wgfbrbpf53ds": {
+      "name": "MCP creators — Daedalus Labs program",
+      "channel": "websets-channel",
+      "on": {
+        "webset.idle": {
+          "steps": ["verify-enrichments", "notify-user"],
+          "params": {
+            "websetId": "webset_01kn2jaampjxn9wgfbrbpf53ds",
+            "keywords": ["mcp", "model context protocol"],
+            "message": "MCP creators webset is idle. Verification complete — review qualified candidates."
+          }
+        }
+      }
+    },
+    "webset_01kn02g36hber5fae92j6ca1bj": {
+      "name": "Lawn care companies — Huntsville",
+      "channel": "websets-channel",
+      "on": {
+        "webset.idle": {
+          "steps": ["notify-user"],
+          "params": { "message": "Lawn care webset finished populating. Review items and send quote emails." }
+        }
+      }
+    }
+  },
+
+  "steps": {
+    "lifecycle-harvest": {
+      "description": "Create webset → poll until idle → collect all items. The foundational webset lifecycle.",
+      "type": "server-workflow",
+      "workflow": "lifecycle.harvest",
+      "params_template": { "query": "{{query}}", "entity": "{{entity}}", "count": "{{count}}" }
+    },
+    "convergent-search": {
+      "description": "Run 2-5 search queries in parallel, identify entities appearing across multiple queries.",
+      "type": "server-workflow",
+      "workflow": "convergent.search",
+      "params_template": { "queries": "{{queries}}", "entity": "{{entity}}" }
+    },
+    "qd-winnow": {
+      "description": "Quality-diversity selection across criteria and enrichments.",
+      "type": "server-workflow",
+      "workflow": "qd.winnow",
+      "params_template": { "websetId": "{{webset_id}}" }
+    },
+    "verified-collection": {
+      "description": "Collect entities via search, then deep-research selected ones with template expansion.",
+      "type": "server-workflow",
+      "workflow": "research.verifiedCollection",
+      "params_template": { "query": "{{query}}", "entity": "{{entity}}", "researchPrompt": "{{research_prompt}}" }
+    },
+    "adversarial-verify": {
+      "description": "Test a hypothesis by gathering evidence for and against in parallel (thesis vs antithesis).",
+      "type": "server-workflow",
+      "workflow": "adversarial.verify",
+      "params_template": { "thesis": "{{thesis}}", "thesisQuery": "{{thesis_query}}", "antithesisQuery": "{{antithesis_query}}" }
+    },
+    "deep-research": {
+      "description": "Open-ended research via Exa Research API. Provide a question, get synthesis across sources.",
+      "type": "server-workflow",
+      "workflow": "research.deep",
+      "params_template": { "instructions": "{{instructions}}" }
+    },
+    "search-and-read": {
+      "description": "Search + fetch full page contents for the top results.",
+      "type": "server-workflow",
+      "workflow": "retrieval.searchAndRead",
+      "params_template": { "query": "{{query}}" }
+    },
+    "expand-and-collect": {
+      "description": "Search, then expand coverage via findSimilar on top results. Deduplicates by URL.",
+      "type": "server-workflow",
+      "workflow": "retrieval.expandAndCollect",
+      "params_template": { "query": "{{query}}" }
+    },
+    "verified-answer": {
+      "description": "Answer a question with independent validation. Checks citation overlap with independent sources.",
+      "type": "server-workflow",
+      "workflow": "retrieval.verifiedAnswer",
+      "params_template": { "query": "{{query}}" }
+    },
+    "semantic-cron": {
+      "description": "Semantic monitoring over time with lens/shape/join/signal logic and snapshot persistence.",
+      "type": "server-workflow",
+      "workflow": "semantic.cron",
+      "params_template": { "websetId": "{{webset_id}}" }
+    },
+    "verify-enrichments": {
+      "description": "Verify enrichments against public data. Parallel verification with re-submission on failure.",
+      "type": "server-workflow",
+      "workflow": "verify.enrichments",
+      "params_template": { "websetId": "{{webset_id}}" },
+      "gate_output": { "field": "averageVerificationScore", "op": ">=", "value": 0.5 }
+    },
+    "annotate-item": {
+      "description": "Annotate a webset item in the local store with judgment, tag, note, or research finding.",
+      "type": "server-workflow",
+      "workflow": "store.annotate"
+    },
+    "airtable-upsert": {
+      "description": "Write or update records in an Airtable table.",
+      "type": "mcp-execute",
+      "server": "airtable",
+      "params_template": { "base_id": "{{airtable_base}}", "table_id": "{{airtable_table}}" }
+    },
+    "notify-user": {
+      "description": "Report a message to the user.",
+      "type": "notify",
+      "params_template": { "message": "{{message}}" }
+    },
+    "send-email": {
+      "description": "Draft an email for human review via Gmail channel.",
+      "type": "channel-tool",
+      "channel": "google-workspace-channel",
+      "tool": "draft_for_review"
+    },
+    "reply-email": {
+      "description": "Reply to an inbound email via Gmail channel.",
+      "type": "channel-tool",
+      "channel": "google-workspace-channel",
+      "tool": "reply"
+    },
+    "linear-comment": {
+      "description": "Add a comment to a Linear issue.",
+      "type": "channel-tool",
+      "channel": "linear-channel",
+      "tool": "comment_on_issue",
+      "params_template": { "issue_id": "{{issue_id}}", "body": "{{comment}}" }
+    },
+    "linear-transition": {
+      "description": "Move a Linear issue to a different state.",
+      "type": "channel-tool",
+      "channel": "linear-channel",
+      "tool": "transition_issue",
+      "params_template": { "issue_id": "{{issue_id}}", "state_name": "{{state}}" }
+    },
+    "linear-assign": {
+      "description": "Assign a Linear issue to a team member.",
+      "type": "channel-tool",
+      "channel": "linear-channel",
+      "tool": "assign_issue",
+      "params_template": { "issue_id": "{{issue_id}}", "assignee_email": "{{assignee}}" }
+    },
+    "linear-create-issue": {
+      "description": "Create a new Linear issue.",
+      "type": "channel-tool",
+      "channel": "linear-channel",
+      "tool": "create_issue",
+      "params_template": { "team_key": "{{team}}", "title": "{{title}}", "description": "{{description}}" }
+    },
+    "linear-list-issues": {
+      "description": "List Linear issues with optional filters.",
+      "type": "channel-tool",
+      "channel": "linear-channel",
+      "tool": "list_issues",
+      "params_template": { "team_key": "{{team}}", "state": "{{state}}" }
+    },
+
+    "draft-incident-summary": {
+      "description": "Compose a model-drift incident summary in markdown for human review. Pulls the latest snapshot for the named config, lists joined entities with cross-lens evidence (Twitter handles, GitHub issue URLs, regression direction, repo, issue state), and tags the summary with rumor_window vs confirmed based on whether provider acknowledgment has been observed. Output goes to a notify step or, when wired up, can be drafted as a Linear ticket / Slack post / Gmail draft.",
+      "type": "notify",
+      "params_template": {
+        "message": "## Model-drift incident\n\nConfig: `{{config_name}}` — fired with reason `{{reason}}`\n\n**Joined entities ({{entity_count}}):** {{joined_entities}}\n\n**New since last snapshot:** {{new_entities}}\n\n**Lens evidence:** Twitter (`twitter_complaints`) + GitHub (`github_issues`) — see channel notification body for per-entity Model name + Regression direction + Repo + Issue state matrix.\n\n**Suggested action:** review the entity list. For each entity firing with `worse-quality`, consider pinning downstream agents to a previous model version while community/provider acknowledgment status is verified.\n\n_Tag (rumor_window vs confirmed) requires fire-time predicate cell — not yet implemented._"
+      }
+    }
+  }
+}

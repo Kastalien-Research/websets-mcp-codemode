@@ -9,6 +9,8 @@ services:
       - PORT=7860
       - DAUTH_SKIP_VALIDATION=${DAUTH_SKIP_VALIDATION:-true}
       - WEBSETS_PUBLIC_URL=${WEBSETS_PUBLIC_URL:-}
+    volumes:
+      - ./data:/app/data
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:7860/health"]
       interval: 5s

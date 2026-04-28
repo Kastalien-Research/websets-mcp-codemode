@@ -12,6 +12,7 @@ import {
 import { projectItem } from '../lib/projections.js';
 import { diceCoefficient } from './convergent.js';
 import { insertSnapshot, getLatestSnapshot } from '../store/db.js';
+import { webhookEventBus, createEvent } from '../webhooks/eventBus.js';
 
 // --- Types ---
 
@@ -731,6 +732,93 @@ export function buildSnapshot(
   };
 }
 
+// --- 6b. Signal-state event emission ---
+
+/**
+ * Decide whether a signal-state event should be published, and publish it.
+ *
+ * Fires `semantic-cron.signal-fired` when:
+ *   - Previous snapshot was not fired and current is fired (new fire), OR
+ *   - Both fired, but current has at least one entity not in the previous (spread).
+ *
+ * Fires `semantic-cron.signal-resolved` when the signal transitions
+ * fired → not fired.
+ *
+ * Stays silent for steady-state continued fires and steady-state non-fires.
+ */
+export function emitSignalStateEvents(
+  configName: string | undefined,
+  current: SnapshotData,
+  previous: SnapshotData | undefined,
+  taskId: string,
+): void {
+  const wasFired = previous?.signal?.fired === true;
+  const nowFired = current.signal.fired === true;
+
+  // Treat absent previous snapshot as "was: false" — first run with a fire is
+  // a new fire from the system's perspective.
+  const transitionToFired = !wasFired && nowFired;
+  const transitionToResolved = wasFired && !nowFired;
+
+  // Spread detection: still fired, but current has entities the previous didn't.
+  let newEntities: string[] = [];
+  if (wasFired && nowFired && previous) {
+    const prevEntities = new Set(previous.signal.entities ?? []);
+    newEntities = (current.signal.entities ?? []).filter(e => !prevEntities.has(e));
+  }
+  const transitionBySpread = wasFired && nowFired && newEntities.length > 0;
+
+  let reason: 'new-fire' | 'spread' | null = null;
+  if (transitionToFired) reason = 'new-fire';
+  else if (transitionBySpread) reason = 'spread';
+
+  if (reason) {
+    try {
+      webhookEventBus.publish(createEvent({
+        id: `semantic-cron-fire_${taskId}_${Date.now()}`,
+        type: 'semantic-cron.signal-fired',
+        configName,
+        taskId,
+        reason,
+        transition: {
+          was: wasFired,
+          now: nowFired,
+          newEntities: reason === 'new-fire'
+            ? (current.signal.entities ?? [])
+            : newEntities,
+          lostEntities: [],
+        },
+        snapshot: current,
+      }));
+    } catch {
+      // Event-bus failure is non-fatal; the snapshot is still persisted.
+    }
+    return;
+  }
+
+  if (transitionToResolved && previous) {
+    const currentEntities = new Set(current.signal.entities ?? []);
+    const lostEntities = (previous.signal.entities ?? []).filter(e => !currentEntities.has(e));
+    try {
+      webhookEventBus.publish(createEvent({
+        id: `semantic-cron-resolve_${taskId}_${Date.now()}`,
+        type: 'semantic-cron.signal-resolved',
+        configName,
+        taskId,
+        transition: {
+          was: wasFired,
+          now: nowFired,
+          newEntities: [],
+          lostEntities,
+        },
+        snapshot: current,
+      }));
+    } catch {
+      // Non-fatal.
+    }
+  }
+}
+
 // --- 7. Main Workflow ---
 
 async function semanticCronWorkflow(
@@ -1040,6 +1128,15 @@ async function semanticCronWorkflow(
     }
   }
 
+  // Emit signal-state events to the bus.
+  // signal-fired is published when:
+  //   (a) the signal transitions false → true, or
+  //   (b) the signal is true and at least one new entity has joined since the
+  //       previous snapshot (substrate spread).
+  // signal-resolved is published when the signal transitions true → false.
+  // Subscribers (e.g. the websets-channel) can route on these directly.
+  emitSignalStateEvents(config.name, snapshot, previousSnapshot, taskId);
+
   // Step: Create monitors (initial run only, non-fatal)
   if (!isReeval && config.monitor) {
     const stepMon = Date.now();
@@ -1119,3 +1216,80 @@ const meta: WorkflowMeta = {
 
 // Register
 registerWorkflow('semantic.cron', semanticCronWorkflow, meta);
+
+// --- 8. Replay Workflow ---
+// Loads a persisted snapshot and re-publishes `semantic-cron.signal-fired`
+// against it as if the cron had just fired. Used for demos / rehearsal where
+// you need a deterministic, fast, on-demand fire from real prior data.
+
+async function semanticCronReplayWorkflow(
+  taskId: string,
+  args: Record<string, unknown>,
+  _exa: Exa,
+  _store: TaskStore,
+): Promise<unknown> {
+  const configName = args.configName as string | undefined;
+  const inlineSnapshot = args.snapshot as SnapshotData | undefined;
+
+  if (!configName && !inlineSnapshot) {
+    throw new WorkflowError(
+      'semantic.cron.replay requires either configName or snapshot',
+      'validate',
+    );
+  }
+
+  let snapshot: SnapshotData;
+  if (inlineSnapshot) {
+    // Demo path: caller supplies the snapshot directly. Useful when SQLite
+    // doesn't have one (fresh deployment) or when bundling a known snapshot
+    // with a recording for guaranteed reproducibility.
+    snapshot = inlineSnapshot;
+  } else {
+    const snapshotRaw = getLatestSnapshot(configName!);
+    if (!snapshotRaw) {
+      throw new WorkflowError(
+        `no snapshot found for config "${configName}"`,
+        'validate',
+      );
+    }
+    snapshot = snapshotRaw as SnapshotData;
+  }
+
+  // Treat replay as a fresh fire: prior state is synthetic "not fired", so
+  // emitSignalStateEvents publishes signal-fired with reason: "new-fire".
+  const effectiveName = configName ?? 'inline-replay';
+  emitSignalStateEvents(effectiveName, snapshot, undefined, taskId);
+
+  return withSummary(
+    {
+      configName: effectiveName,
+      replayed: true,
+      source: inlineSnapshot ? 'inline' : 'sqlite',
+      signal: snapshot.signal,
+      joinedEntities: snapshot.join.entities.map(e => e.entity),
+    },
+    `replayed ${effectiveName} snapshot — signal: ${
+      snapshot.signal.fired ? `FIRED (${snapshot.signal.entities.length} entities)` : 'not fired'
+    }`,
+  );
+}
+
+const replayMeta: WorkflowMeta = {
+  title: 'Semantic Cron — Replay',
+  description: 'Re-publish a signal-fired event from a persisted snapshot. Used for deterministic demos: load the latest stored snapshot for a named config and emit `semantic-cron.signal-fired` to the webhook event bus, so subscribers (channels, action routes) react as if a fresh fire just occurred. Detection is canned (the snapshot was generated by an earlier real run); the action layer runs live.',
+  category: 'monitoring',
+  parameters: [
+    { name: 'configName', type: 'string', required: false, description: 'Config name whose latest snapshot should be loaded from SQLite. Either this or `snapshot` must be provided.' },
+    { name: 'snapshot', type: 'object', required: false, description: 'Inline snapshot object (same shape that semantic.cron returns). Bypasses SQLite — useful for self-contained demo bundles. Either this or `configName` must be provided.' },
+  ],
+  steps: [
+    'Load latest snapshot from SQLite for the given configName',
+    'Publish semantic-cron.signal-fired event to the webhook event bus with the snapshot in payload',
+  ],
+  output: 'Confirmation of replay with signal status and joined entity list.',
+  example: `await callOperation('tasks.create', {\n  type: 'semantic.cron.replay',\n  args: { configName: 'model-drift-monitor' },\n});`,
+  relatedWorkflows: ['semantic.cron'],
+  tags: ['monitoring', 'demo', 'replay', 'signal'],
+};
+
+registerWorkflow('semantic.cron.replay', semanticCronReplayWorkflow, replayMeta);
