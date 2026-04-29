@@ -1,0 +1,20 @@
+{
+  "_doc": "Per-webset filter for the websets-channel. The channel watches this file and reloads on change. 'enabled: false' silences a webset entirely. 'events' (optional, array of event types) acts as an event-type allowlist when present; missing/null means all events. 'default' applies to any webset not listed below.",
+  "default": { "enabled": false },
+  "websets": {
+    "webset_01kqb1jcy7tq6r6h0yad19r7ke": {
+      "label": "model-drift-monitor / twitter_complaints",
+      "enabled": true,
+      "events": ["semantic-cron.signal-fired", "semantic-cron.signal-resolved", "webset.idle"]
+    },
+    "webset_01kqb1jfbs7hcgr7fq7ntrpz7g": {
+      "label": "model-drift-monitor / github_issues",
+      "enabled": true,
+      "events": ["semantic-cron.signal-fired", "semantic-cron.signal-resolved", "webset.idle"]
+    },
+    "webset_01k85vbnz7qcq5m0c1xk5rxbv6": {
+      "label": "ppa-firm-power-tracker (muted)",
+      "enabled": false
+    }
+  }
+}

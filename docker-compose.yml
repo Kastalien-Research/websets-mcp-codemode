@@ -7,46 +7,12 @@ services:
       - EXA_API_KEY=${EXA_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - PORT=7860
+      - DAUTH_SKIP_VALIDATION=${DAUTH_SKIP_VALIDATION:-true}
+      - WEBSETS_PUBLIC_URL=${WEBSETS_PUBLIC_URL:-}
+    volumes:
+      - ./data:/app/data
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:7860/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
-    restart: unless-stopped
-
-  google-workspace-mcp:
-    build: ./servers/google-workspace-mcp
-    ports:
-      - "3000:3000"
-    environment:
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - GOOGLE_REFRESH_TOKEN=${GOOGLE_REFRESH_TOKEN}
-      - HOST=0.0.0.0
-      - PORT=3000
-    restart: unless-stopped
-
-  airtable-mcp:
-    build: ./servers/effect-airtable-mcp
-    ports:
-      - "3500:3500"
-    environment:
-      - AIRTABLE_API_KEY=${AIRTABLE_API_KEY}
-      - HOST=0.0.0.0
-      - PORT=3500
-    restart: unless-stopped
-
-  thoughtbox-gateway:
-    build: ./servers/thoughtbox-gateway
-    ports:
-      - "8000:8000"
-    env_file:
-      - ./servers/thoughtbox-gateway/.env
-    environment:
-      - PORT=8000
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/health"]
       interval: 5s
       timeout: 3s
       retries: 3

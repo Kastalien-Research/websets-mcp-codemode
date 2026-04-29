@@ -563,6 +563,155 @@ describe('joinLensResults — entity', () => {
   });
 });
 
+describe('joinLensResults — keyEnrichment', () => {
+  it('joins items by an enrichment value when canonical entity differs', () => {
+    const lensResults = [
+      {
+        lensId: 'twitter',
+        websetId: 'ws_1',
+        totalItems: 1,
+        shapedItems: [
+          {
+            id: '1',
+            name: 'some twitter handle',
+            url: 'https://x.com/a/status/1',
+            entityType: 'company',
+            enrichments: { 'Model name': 'claude-opus-4-7' },
+            createdAt: '2026-04-25T00:00:00Z',
+            projected: {},
+          },
+        ],
+      },
+      {
+        lensId: 'github',
+        websetId: 'ws_2',
+        totalItems: 1,
+        shapedItems: [
+          {
+            id: '2',
+            name: 'BerriAI/litellm Issue #26529',
+            url: 'https://github.com/BerriAI/litellm/issues/26529',
+            entityType: 'company',
+            enrichments: { 'Model name': 'claude-opus-4-7' },
+            createdAt: '2026-04-26T00:00:00Z',
+            projected: {},
+          },
+        ],
+      },
+    ];
+
+    const result = joinLensResults(lensResults, {
+      by: 'entity',
+      keyEnrichment: 'Model name',
+    });
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0].entity).toBe('claude-opus-4-7');
+    expect(result.entities[0].lensCount).toBe(2);
+    expect(result.entities[0].presentInLenses.sort()).toEqual(['github', 'twitter']);
+  });
+
+  it('skips items without the keyEnrichment value', () => {
+    const lensResults = [
+      {
+        lensId: 'a',
+        websetId: 'ws_1',
+        totalItems: 2,
+        shapedItems: [
+          {
+            id: '1',
+            name: 'item 1',
+            url: 'https://a.com/1',
+            entityType: 'company',
+            enrichments: { 'Model name': 'claude-opus-4-7' },
+            createdAt: '2026-04-25T00:00:00Z',
+            projected: {},
+          },
+          {
+            id: '2',
+            name: 'item 2',
+            url: 'https://a.com/2',
+            entityType: 'company',
+            enrichments: { 'Model name': null },
+            createdAt: '2026-04-25T00:00:00Z',
+            projected: {},
+          },
+        ],
+      },
+      {
+        lensId: 'b',
+        websetId: 'ws_2',
+        totalItems: 1,
+        shapedItems: [
+          {
+            id: '3',
+            name: 'item 3',
+            url: 'https://b.com/3',
+            entityType: 'company',
+            enrichments: { 'Model name': 'claude-opus-4-7' },
+            createdAt: '2026-04-25T00:00:00Z',
+            projected: {},
+          },
+        ],
+      },
+    ];
+
+    const result = joinLensResults(lensResults, {
+      by: 'entity',
+      keyEnrichment: 'Model name',
+      minLensOverlap: 2,
+    });
+    // Item 2 has no Model name → skipped. Items 1 + 3 share key → 1 joined entity.
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0].entity).toBe('claude-opus-4-7');
+    expect(result.entities[0].lensCount).toBe(2);
+  });
+
+  it('matches alias variants via fuzzy + case-insensitive', () => {
+    const lensResults = [
+      {
+        lensId: 'a',
+        websetId: 'ws_1',
+        totalItems: 1,
+        shapedItems: [
+          {
+            id: '1',
+            name: 'item 1',
+            url: 'https://a.com/1',
+            entityType: 'company',
+            enrichments: { 'Model name': 'Claude Opus 4.7' },
+            createdAt: '2026-04-25T00:00:00Z',
+            projected: {},
+          },
+        ],
+      },
+      {
+        lensId: 'b',
+        websetId: 'ws_2',
+        totalItems: 1,
+        shapedItems: [
+          {
+            id: '2',
+            name: 'item 2',
+            url: 'https://b.com/2',
+            entityType: 'company',
+            enrichments: { 'Model name': 'claude opus 4.7' },
+            createdAt: '2026-04-25T00:00:00Z',
+            projected: {},
+          },
+        ],
+      },
+    ];
+
+    const result = joinLensResults(lensResults, {
+      by: 'entity',
+      keyEnrichment: 'Model name',
+      entityMatch: { method: 'fuzzy', nameThreshold: 0.6 },
+    });
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0].lensCount).toBe(2);
+  });
+});
+
 describe('joinLensResults — cooccurrence/temporal', () => {
   it('cooccurrence: lists lenses with shaped items', () => {
     const lensResults = [
