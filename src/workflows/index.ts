@@ -1,5 +1,6 @@
 // src/workflows/index.ts — barrel for side-effect workflow registrations
 import './echo.js';
+import './echoEffect.js';
 import './qdWinnow.js';
 import './researchDeep.js';
 import './lifecycle.js';
