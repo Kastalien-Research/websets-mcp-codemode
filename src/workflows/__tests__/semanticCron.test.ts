@@ -666,7 +666,67 @@ describe('joinLensResults — keyEnrichment', () => {
     expect(result.entities[0].lensCount).toBe(2);
   });
 
-  it('matches alias variants via fuzzy + case-insensitive', () => {
+  it('matches alias variants via fuzzy when case-insensitive equality fails', () => {
+    // Aliased pairs that DON'T collapse under case-insensitive equality —
+    // exercises the diceCoefficient branch, not the `a === b` short-circuit.
+    const lensResults = [
+      {
+        lensId: 'a',
+        websetId: 'ws_1',
+        totalItems: 1,
+        shapedItems: [
+          {
+            id: '1',
+            name: 'item 1',
+            url: 'https://a.com/1',
+            entityType: 'company',
+            enrichments: { 'Model name': 'opus 4.7' },
+            createdAt: '2026-04-25T00:00:00Z',
+            projected: {},
+          },
+        ],
+      },
+      {
+        lensId: 'b',
+        websetId: 'ws_2',
+        totalItems: 1,
+        shapedItems: [
+          {
+            id: '2',
+            name: 'item 2',
+            url: 'https://b.com/2',
+            entityType: 'company',
+            enrichments: { 'Model name': 'Opus 4.7 model' },
+            createdAt: '2026-04-25T00:00:00Z',
+            projected: {},
+          },
+        ],
+      },
+    ];
+
+    const fuzzy = joinLensResults(lensResults, {
+      by: 'entity',
+      keyEnrichment: 'Model name',
+      entityMatch: { method: 'fuzzy', nameThreshold: 0.6 },
+    });
+    expect(fuzzy.entities).toHaveLength(1);
+    expect(fuzzy.entities[0].lensCount).toBe(2);
+
+    // Counter-check: with method:'exact' the same inputs must NOT match,
+    // proving the assertion above is doing real work on the fuzzy branch.
+    const exact = joinLensResults(lensResults, {
+      by: 'entity',
+      keyEnrichment: 'Model name',
+      entityMatch: { method: 'exact' },
+      minLensOverlap: 2,
+    });
+    expect(exact.entities).toHaveLength(0);
+  });
+
+  it('case-insensitive equality matches without engaging fuzzy', () => {
+    // Pure case difference — handled by the `a === b` lowercase short-circuit
+    // before fuzz is consulted. method:'exact' must still match here, since
+    // case-insensitive equality is intentionally always-on for keyEnrichment.
     const lensResults = [
       {
         lensId: 'a',
@@ -705,7 +765,7 @@ describe('joinLensResults — keyEnrichment', () => {
     const result = joinLensResults(lensResults, {
       by: 'entity',
       keyEnrichment: 'Model name',
-      entityMatch: { method: 'fuzzy', nameThreshold: 0.6 },
+      entityMatch: { method: 'exact' },
     });
     expect(result.entities).toHaveLength(1);
     expect(result.entities[0].lensCount).toBe(2);
@@ -1304,6 +1364,254 @@ describe('semantic.cron workflow', () => {
     const result = (await workflow(task.id, task.args, mockExa, store)) as any;
     expect(result.snapshot.lenses.a.shapedCount).toBe(0);
     expect(result.snapshot.signal.fired).toBe(false);
+    store.dispose();
+  });
+});
+
+describe('semantic.cron — validate-time degenerate-config rejection', () => {
+  const workflow = workflowRegistry.get('semantic.cron')!;
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = new TaskStore();
+  });
+
+  const baseConfig = (overrides: any = {}) => ({
+    name: 'test',
+    lenses: [{ id: 'a', source: { query: 'x' } }],
+    shapes: [{ lensId: 'a', conditions: [{ enrichment: 'X', operator: 'exists' }], logic: 'all' }],
+    join: { by: 'cooccurrence' },
+    signal: { requires: { type: 'any' } },
+    ...overrides,
+  });
+
+  it('rejects 1-lens config with signal type "all"', async () => {
+    const task = store.create('semantic.cron', {
+      config: baseConfig({ signal: { requires: { type: 'all' } } }),
+    });
+    await expect(workflow(task.id, task.args, {} as any, store)).rejects.toThrow(
+      /Signal type "all" requires at least 2 lenses/,
+    );
+    store.dispose();
+  });
+
+  it('rejects 1-lens config with signal type "threshold"', async () => {
+    const task = store.create('semantic.cron', {
+      config: baseConfig({ signal: { requires: { type: 'threshold', min: 2 } } }),
+    });
+    await expect(workflow(task.id, task.args, {} as any, store)).rejects.toThrow(
+      /Signal type "threshold" requires at least 2 lenses/,
+    );
+    store.dispose();
+  });
+
+  it('rejects 1-lens config with signal type "combination"', async () => {
+    const task = store.create('semantic.cron', {
+      config: baseConfig({
+        signal: { requires: { type: 'combination', sufficient: [['a']] } },
+      }),
+    });
+    await expect(workflow(task.id, task.args, {} as any, store)).rejects.toThrow(
+      /Signal type "combination" requires at least 2 lenses/,
+    );
+    store.dispose();
+  });
+
+  it('allows 1-lens config with signal type "any"', async () => {
+    const ws1 = mockWebset('ws_1', [{ id: 'enr_1', description: 'X', format: 'text' }]);
+    const mockExa = createMockExa({ a: { webset: ws1, items: [] } });
+    const task = store.create('semantic.cron', {
+      config: baseConfig({ signal: { requires: { type: 'any' } } }),
+    });
+    await expect(workflow(task.id, task.args, mockExa, store)).resolves.toBeDefined();
+    store.dispose();
+  });
+
+  it('rejects minLensOverlap > lensCount on entity join', async () => {
+    const task = store.create('semantic.cron', {
+      config: baseConfig({
+        lenses: [
+          { id: 'a', source: { query: 'x' } },
+          { id: 'b', source: { query: 'y' } },
+        ],
+        shapes: [
+          { lensId: 'a', conditions: [], logic: 'all' },
+          { lensId: 'b', conditions: [], logic: 'all' },
+        ],
+        join: { by: 'entity', minLensOverlap: 5 },
+        signal: { requires: { type: 'any' } },
+      }),
+    });
+    await expect(workflow(task.id, task.args, {} as any, store)).rejects.toThrow(
+      /minLensOverlap \(5\) exceeds lens count \(2\)/,
+    );
+    store.dispose();
+  });
+
+  it('rejects minLensOverlap=1 with 2+ lenses on entity join', async () => {
+    const task = store.create('semantic.cron', {
+      config: baseConfig({
+        lenses: [
+          { id: 'a', source: { query: 'x' } },
+          { id: 'b', source: { query: 'y' } },
+        ],
+        shapes: [
+          { lensId: 'a', conditions: [], logic: 'all' },
+          { lensId: 'b', conditions: [], logic: 'all' },
+        ],
+        join: { by: 'entity', minLensOverlap: 1 },
+        signal: { requires: { type: 'any' } },
+      }),
+    });
+    await expect(workflow(task.id, task.args, {} as any, store)).rejects.toThrow(
+      /minLensOverlap must be >= 2 when there are multiple lenses/,
+    );
+    store.dispose();
+  });
+
+  it('does not enforce minLensOverlap on cooccurrence join', async () => {
+    // cooccurrence/temporal don't produce entities, so the minOverlap rule
+    // shouldn't fire. The test passes if validation does not throw — the
+    // workflow may then error at runtime due to no mock exa, but that's fine.
+    const task = store.create('semantic.cron', {
+      config: baseConfig({
+        lenses: [
+          { id: 'a', source: { query: 'x' } },
+          { id: 'b', source: { query: 'y' } },
+        ],
+        shapes: [
+          { lensId: 'a', conditions: [], logic: 'all' },
+          { lensId: 'b', conditions: [], logic: 'all' },
+        ],
+        join: { by: 'cooccurrence', minLensOverlap: 1 },
+        signal: { requires: { type: 'any' } },
+      }),
+    });
+    // Will fail at exa.websets.create (no mock), not at validate
+    await expect(workflow(task.id, task.args, {} as any, store)).rejects.not.toThrow(
+      /minLensOverlap/,
+    );
+    store.dispose();
+  });
+
+  it('rejects threshold signal with min > lensCount', async () => {
+    const task = store.create('semantic.cron', {
+      config: baseConfig({
+        lenses: [
+          { id: 'a', source: { query: 'x' } },
+          { id: 'b', source: { query: 'y' } },
+        ],
+        shapes: [
+          { lensId: 'a', conditions: [], logic: 'all' },
+          { lensId: 'b', conditions: [], logic: 'all' },
+        ],
+        signal: { requires: { type: 'threshold', min: 5 } },
+      }),
+    });
+    await expect(workflow(task.id, task.args, {} as any, store)).rejects.toThrow(
+      /min \(5\) exceeds lens count \(2\)/,
+    );
+    store.dispose();
+  });
+
+  it('rejects threshold signal with min < 2', async () => {
+    const task = store.create('semantic.cron', {
+      config: baseConfig({
+        lenses: [
+          { id: 'a', source: { query: 'x' } },
+          { id: 'b', source: { query: 'y' } },
+        ],
+        shapes: [
+          { lensId: 'a', conditions: [], logic: 'all' },
+          { lensId: 'b', conditions: [], logic: 'all' },
+        ],
+        signal: { requires: { type: 'threshold', min: 1 } },
+      }),
+    });
+    await expect(workflow(task.id, task.args, {} as any, store)).rejects.toThrow(
+      /min must be >= 2 for threshold signals/,
+    );
+    store.dispose();
+  });
+
+  it('rejects combination with single-lens combo', async () => {
+    const task = store.create('semantic.cron', {
+      config: baseConfig({
+        lenses: [
+          { id: 'a', source: { query: 'x' } },
+          { id: 'b', source: { query: 'y' } },
+        ],
+        shapes: [
+          { lensId: 'a', conditions: [], logic: 'all' },
+          { lensId: 'b', conditions: [], logic: 'all' },
+        ],
+        signal: { requires: { type: 'combination', sufficient: [['a']] } },
+      }),
+    });
+    await expect(workflow(task.id, task.args, {} as any, store)).rejects.toThrow(
+      /Each combination .* must have at least 2 lens IDs/,
+    );
+    store.dispose();
+  });
+
+  it('rejects combination referencing unknown lens id', async () => {
+    const task = store.create('semantic.cron', {
+      config: baseConfig({
+        lenses: [
+          { id: 'a', source: { query: 'x' } },
+          { id: 'b', source: { query: 'y' } },
+        ],
+        shapes: [
+          { lensId: 'a', conditions: [], logic: 'all' },
+          { lensId: 'b', conditions: [], logic: 'all' },
+        ],
+        signal: { requires: { type: 'combination', sufficient: [['a', 'nonexistent']] } },
+      }),
+    });
+    await expect(workflow(task.id, task.args, {} as any, store)).rejects.toThrow(
+      /Unknown lens ID "nonexistent"/,
+    );
+    store.dispose();
+  });
+
+  it('rejects combination with empty sufficient array', async () => {
+    const task = store.create('semantic.cron', {
+      config: baseConfig({
+        lenses: [
+          { id: 'a', source: { query: 'x' } },
+          { id: 'b', source: { query: 'y' } },
+        ],
+        shapes: [
+          { lensId: 'a', conditions: [], logic: 'all' },
+          { lensId: 'b', conditions: [], logic: 'all' },
+        ],
+        signal: { requires: { type: 'combination', sufficient: [] } },
+      }),
+    });
+    await expect(workflow(task.id, task.args, {} as any, store)).rejects.toThrow(
+      /sufficient must be a non-empty array/,
+    );
+    store.dispose();
+  });
+
+  it('warns but does not throw when config.name is missing', async () => {
+    const ws1 = mockWebset('ws_1', [{ id: 'enr_1', description: 'X', format: 'text' }]);
+    const mockExa = createMockExa({ a: { webset: ws1, items: [] } });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const task = store.create('semantic.cron', {
+      config: {
+        // name omitted on purpose
+        lenses: [{ id: 'a', source: { query: 'x' } }],
+        shapes: [{ lensId: 'a', conditions: [], logic: 'all' }],
+        join: { by: 'cooccurrence' },
+        signal: { requires: { type: 'any' } },
+      },
+    });
+    await expect(workflow(task.id, task.args, mockExa, store)).resolves.toBeDefined();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/config\.name is unset/),
+    );
+    warnSpy.mockRestore();
     store.dispose();
   });
 });

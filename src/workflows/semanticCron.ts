@@ -833,7 +833,11 @@ async function semanticCronWorkflow(
   const rawConfig = args.config as SemanticCronConfig;
   const variables = args.variables as Record<string, string> | undefined;
   const existingWebsets = args.existingWebsets as Record<string, string> | undefined;
-  const timeoutMs = (args.timeout as number) ?? 300_000;
+  // Default poll deadline: 60 minutes. Real websets routinely take 10-30
+  // minutes on non-trivial queries; the previous 5-minute default would treat
+  // most production runs as timeouts. Callers needing a hard cap should pass
+  // `timeout` explicitly.
+  const timeoutMs = (args.timeout as number) ?? 60 * 60 * 1000;
 
   // Load previous snapshot from args or SQLite
   let previousSnapshot = args.previousSnapshot as SnapshotData | undefined;
@@ -879,6 +883,101 @@ async function semanticCronWorkflow(
         'validate',
       );
     }
+  }
+
+  // Reject configs whose signal/join math is degenerate for the lens count.
+  // Targeted at the trap where signal type 'all'/'threshold'/'combination' with
+  // a single lens reduces to a vacuous tautology that looks like real cross-lens
+  // correlation but isn't. Signal type 'any' is allowed on 1 lens — that's a
+  // valid "did anything match shape?" use case, not vacuous.
+  const lensCount = config.lenses.length;
+  const sigType = config.signal.requires.type;
+
+  if (lensCount < 2 && (sigType === 'all' || sigType === 'threshold' || sigType === 'combination')) {
+    throw new WorkflowError(
+      `Signal type "${sigType}" requires at least 2 lenses to be meaningful — `
+      + `with 1 lens it trivially fires for every shape match. `
+      + `Either add a second lens or use signal.requires.type "any".`,
+      'validate',
+    );
+  }
+
+  // Join minLensOverlap is only enforced when the join mode actually produces
+  // entities (entity / entity+temporal). cooccurrence and temporal modes return
+  // empty entities and don't use minOverlap.
+  const joinByEntities = config.join.by === 'entity' || config.join.by === 'entity+temporal';
+  if (joinByEntities) {
+    const minOverlap = config.join.minLensOverlap ?? 2;
+    if (minOverlap > lensCount) {
+      throw new WorkflowError(
+        `join.minLensOverlap (${minOverlap}) exceeds lens count (${lensCount}). `
+        + `No entity can ever satisfy this — signal would never fire.`,
+        'validate',
+      );
+    }
+    if (minOverlap < 2 && lensCount >= 2) {
+      throw new WorkflowError(
+        `join.minLensOverlap must be >= 2 when there are multiple lenses. `
+        + `minOverlap=1 makes every single-lens entity satisfy the join, defeating cross-lens correlation.`,
+        'validate',
+      );
+    }
+  }
+
+  if (sigType === 'threshold') {
+    const min = config.signal.requires.min ?? 2;
+    if (min > lensCount) {
+      throw new WorkflowError(
+        `signal.requires.min (${min}) exceeds lens count (${lensCount}). Signal would never fire.`,
+        'validate',
+      );
+    }
+    if (min < 2) {
+      throw new WorkflowError(
+        `signal.requires.min must be >= 2 for threshold signals. min=1 fires for any single-lens match.`,
+        'validate',
+      );
+    }
+  }
+
+  if (sigType === 'combination') {
+    const combos = config.signal.requires.sufficient;
+    if (!combos || combos.length === 0) {
+      throw new WorkflowError(
+        `signal.requires.sufficient must be a non-empty array of lens-id combinations for combination signals.`,
+        'validate',
+      );
+    }
+    for (const combo of combos) {
+      if (!combo || combo.length < 2) {
+        throw new WorkflowError(
+          `Each combination in signal.requires.sufficient must have at least 2 lens IDs. `
+          + `Got: ${JSON.stringify(combo)}`,
+          'validate',
+        );
+      }
+      for (const id of combo) {
+        if (!lensIds.includes(id)) {
+          throw new WorkflowError(
+            `Unknown lens ID "${id}" in signal.requires.sufficient. Available: ${lensIds.join(', ')}`,
+            'validate',
+          );
+        }
+      }
+    }
+  }
+
+  // config.name is load-bearing for snapshot persistence, delta computation, and
+  // replay. Without it, every run looks like a fresh signal-fired transition.
+  // Warn loudly rather than reject — existing demo configs may not set it, and
+  // it's easier to fix downstream than to break callers.
+  if (!config.name || config.name.trim().length === 0) {
+    console.warn(
+      `[semanticCron] config.name is unset — snapshot persistence, delta `
+      + `computation, and replay will be skipped. Every fired signal will look `
+      + `like a fresh transition. Set config.name to a stable string to enable `
+      + `state tracking across runs.`,
+    );
   }
 
   tracker.track('validate', step0);
@@ -1064,7 +1163,7 @@ async function semanticCronWorkflow(
         total: 8,
       });
 
-      await pollUntilIdle({
+      const pollResult = await pollUntilIdle({
         exa,
         websetId: websetIds[lens.id],
         taskId,
@@ -1073,6 +1172,16 @@ async function semanticCronWorkflow(
         stepNum: 2,
         totalSteps: 8,
       });
+
+      if (pollResult.timedOut) {
+        throw new WorkflowError(
+          `Lens "${lens.id}" (websetId=${websetIds[lens.id]}) did not reach `
+          + `idle within ${Math.round(timeoutMs / 1000)}s. Pass a larger `
+          + `\`timeout\` arg if this is expected, or check the webset directly. `
+          + `Refusing to proceed with partial item data.`,
+          'poll',
+        );
+      }
 
       tracker.track(`poll-${lens.id}`, stepStart);
 
