@@ -104,20 +104,33 @@ class WebhookEventBus {
               try { cb(candidateEvent); } catch { /* non-fatal */ }
             }
           }
-        } catch {
-          // Receiver rule errors are non-fatal
+        } catch (err) {
+          console.error(
+            `[webhookEventBus] receiver-rule error for event ${event.id} `
+            + `(type=${event.type}):`,
+            err,
+          );
         }
       }
-    } catch {
-      // SQLite errors are non-fatal — don't block event delivery
+    } catch (err) {
+      console.error(
+        `[webhookEventBus] SQLite persist failed for event ${event.id} `
+        + `(type=${event.type}). Event will still be broadcast over SSE but `
+        + `will not appear in the shadow store.`,
+        err,
+      );
     }
 
     // Broadcast to SSE subscribers
     for (const cb of this.subscribers) {
       try {
         cb(event);
-      } catch {
-        // Individual subscriber errors are non-fatal
+      } catch (err) {
+        console.error(
+          `[webhookEventBus] subscriber callback threw for event ${event.id} `
+          + `(type=${event.type}). Other subscribers will still receive the event.`,
+          err,
+        );
       }
     }
   }

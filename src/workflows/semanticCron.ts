@@ -841,8 +841,13 @@ async function semanticCronWorkflow(
     try {
       const stored = getLatestSnapshot(rawConfig.name);
       if (stored) previousSnapshot = stored as SnapshotData;
-    } catch {
-      // SQLite not available — non-fatal
+    } catch (err) {
+      console.error(
+        `[semanticCron] Failed to load previous snapshot for "${rawConfig.name}" `
+        + `from SQLite. Continuing without prior state — every fired signal will `
+        + `look like a fresh transition.`,
+        err,
+      );
     }
   }
 
@@ -1123,8 +1128,13 @@ async function semanticCronWorkflow(
   if (config.name) {
     try {
       insertSnapshot(config.name, snapshot);
-    } catch {
-      // SQLite not available — non-fatal
+    } catch (err) {
+      console.error(
+        `[semanticCron] Failed to persist snapshot for "${config.name}" to `
+        + `SQLite. The next run will not see this snapshot as the "previous" `
+        + `state, so signal transitions may be misreported.`,
+        err,
+      );
     }
   }
 
@@ -1150,8 +1160,13 @@ async function semanticCronWorkflow(
             timezone: config.monitor.timezone,
           },
         });
-      } catch {
-        // Monitor creation failure is non-fatal
+      } catch (err) {
+        console.error(
+          `[semanticCron] Failed to create monitor for lens "${lens.id}" `
+          + `(websetId=${websetIds[lens.id]}) with cron="${config.monitor.cron}". `
+          + `This lens will not auto-rerun on schedule.`,
+          err,
+        );
       }
     }
     tracker.track('monitors', stepMon);
