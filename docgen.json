@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/@effect/docgen/schema.json",
+  "projectHomepage": "https://github.com/Kastalien-Research/websets-mcp-codemode",
+  "srcDir": "src",
+  "outDir": "docs",
+  "exclude": [
+    "src/internal/**/*.ts",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts"
+  ],
+  "enforceDescriptions": true,
+  "enforceExamples": false,
+  "enforceVersion": true,
+  "enableSearch": true,
+  "parseCompilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "lib": ["ES2022"]
+  },
+  "examplesCompilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "lib": ["ES2022"]
+  }
+}
