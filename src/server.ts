@@ -8,7 +8,6 @@ import { registerExecuteTool } from "./tools/executeTool.js";
 import { registerStatusTool } from "./tools/statusTool.js";
 import { registerWorkflowMcp } from "./workflows/mcp.js";
 import { createWebhookRouter } from "./webhooks/receiver.js";
-import { initDAuth, protectedResourceMetadata, requireDAuth } from "./auth/dauth.js";
 import type { Express, Request, Response } from "express";
 
 export interface ServerConfig {
@@ -19,14 +18,6 @@ export interface ServerConfig {
   defaultCompatMode?: 'safe' | 'strict';
   /** Secret for verifying Exa webhook signatures (Exa-Signature header) */
   webhookSecret?: string;
-  /** Public URL of this server (used as OAuth resource identifier for DAuth) */
-  resourceUrl?: string;
-  /** DAuth authorization server URL. Defaults to https://as.dedaluslabs.ai */
-  authServerUrl?: string;
-  /** Required OAuth scopes. Defaults to [] */
-  requiredScopes?: string[];
-  /** Skip DAuth token validation (for local development). Defaults to false */
-  skipDAuth?: boolean;
 }
 
 export interface ServerInstance {
@@ -57,27 +48,11 @@ export function createServer(config: ServerConfig): ServerInstance {
     },
   }));
 
-  // DAuth: always initialize. Resource URL is derived from the request
-  // Host header when not explicitly configured. Set DAUTH_SKIP_VALIDATION=true
-  // for local development to bypass token checks.
-  initDAuth({
-    resourceUrl: config.resourceUrl,
-    authServerUrl: config.authServerUrl,
-    requiredScopes: config.requiredScopes,
-    skipValidation: config.skipDAuth,
-  });
-
   // Health endpoint for Docker healthchecks and k8s probes
   app.get('/health', (_req: Request, res: Response) => {
     res.setHeader('Content-Type', 'application/json');
     res.json({ status: 'ok' });
   });
-
-  // OAuth Protected Resource Metadata (RFC 9728)
-  app.get(
-    '/.well-known/oauth-protected-resource',
-    protectedResourceMetadata,
-  );
 
   // Webhook receiver for Exa webhook events + SSE stream for channel bridges
   app.use(createWebhookRouter(config.webhookSecret));
@@ -115,9 +90,6 @@ export function createServer(config: ServerConfig): ServerInstance {
       scheduleSessionCleanup(sessionId);
     }
   };
-
-  // DAuth: require Bearer token on /mcp
-  app.use('/mcp', requireDAuth);
 
   app.all("/mcp", async (req: Request, res: Response) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;

@@ -7,7 +7,6 @@ services:
       - EXA_API_KEY=${EXA_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - PORT=7860
-      - DAUTH_SKIP_VALIDATION=${DAUTH_SKIP_VALIDATION:-true}
       - WEBSETS_PUBLIC_URL=${WEBSETS_PUBLIC_URL:-}
     volumes:
       - ./data:/app/data
