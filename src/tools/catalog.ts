@@ -77,16 +77,27 @@ function buildCatalog(): CatalogEntry[] {
   return entries;
 }
 
-function zodShapeToParams(schema: z.ZodTypeAny): Array<{ name: string; type: string; required: boolean }> {
-  const params: Array<{ name: string; type: string; required: boolean }> = [];
+interface ParamInfo {
+  name: string;
+  type: string;
+  required: boolean;
+  description?: string;
+  default?: unknown;
+}
 
-  // Unwrap catchall/passthrough wrappers
+function zodShapeToParams(schema: z.ZodTypeAny): ParamInfo[] {
+  const params: ParamInfo[] = [];
+
   let inner = schema;
   if (inner instanceof z.ZodObject) {
     const shape = inner.shape as Record<string, z.ZodTypeAny>;
     for (const [key, val] of Object.entries(shape)) {
       let typeName = 'unknown';
       let required = true;
+      let defaultValue: unknown;
+
+      // .describe() can be called at any layer; check the outer wrapper first.
+      const outerDescription = (val as any)._def?.description as string | undefined;
 
       let unwrapped = val;
       if (unwrapped instanceof z.ZodOptional) {
@@ -95,8 +106,15 @@ function zodShapeToParams(schema: z.ZodTypeAny): Array<{ name: string; type: str
       }
       if (unwrapped instanceof z.ZodDefault) {
         required = false;
+        try {
+          defaultValue = (unwrapped as any)._def.defaultValue();
+        } catch {
+          // _def.defaultValue is a thunk that may throw; ignore on failure.
+        }
         unwrapped = unwrapped.removeDefault();
       }
+
+      const description = outerDescription ?? ((unwrapped as any)._def?.description as string | undefined);
 
       if (unwrapped instanceof z.ZodString) typeName = 'string';
       else if (unwrapped instanceof z.ZodNumber) typeName = 'number';
@@ -106,7 +124,10 @@ function zodShapeToParams(schema: z.ZodTypeAny): Array<{ name: string; type: str
       else if (unwrapped instanceof z.ZodEnum) typeName = `enum(${(unwrapped as any)._def.values.join('|')})`;
       else if (unwrapped instanceof z.ZodLiteral) typeName = `literal(${JSON.stringify((unwrapped as any)._def.value)})`;
 
-      params.push({ name: key, type: typeName, required });
+      const param: ParamInfo = { name: key, type: typeName, required };
+      if (description) param.description = description;
+      if (defaultValue !== undefined) param.default = defaultValue;
+      params.push(param);
     }
   }
 
@@ -120,11 +141,25 @@ function zodToJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
     const properties: Record<string, unknown> = {};
     const required: string[] = [];
     for (const [key, val] of Object.entries(shape)) {
+      const outerDescription = (val as any)._def?.description as string | undefined;
       let unwrapped = val;
       let isOptional = false;
+      let defaultValue: unknown;
       if (unwrapped instanceof z.ZodOptional) { isOptional = true; unwrapped = unwrapped.unwrap(); }
-      if (unwrapped instanceof z.ZodDefault) { isOptional = true; unwrapped = unwrapped.removeDefault(); }
-      properties[key] = zodToJsonSchema(unwrapped);
+      if (unwrapped instanceof z.ZodDefault) {
+        isOptional = true;
+        try {
+          defaultValue = (unwrapped as any)._def.defaultValue();
+        } catch {
+          // defaultValue thunk may throw; ignore.
+        }
+        unwrapped = unwrapped.removeDefault();
+      }
+      const description = outerDescription ?? ((unwrapped as any)._def?.description as string | undefined);
+      const propSchema = zodToJsonSchema(unwrapped) as Record<string, unknown>;
+      if (description) propSchema.description = description;
+      if (defaultValue !== undefined) propSchema.default = defaultValue;
+      properties[key] = propSchema;
       if (!isOptional) required.push(key);
     }
     return { type: 'object', properties, ...(required.length > 0 ? { required } : {}) };
@@ -220,7 +255,7 @@ export function searchCatalog(query: string, options: SearchOptions = {}): Searc
     total: matched.length,
     showing: limited.length,
     ...(limited.length < matched.length
-      ? { hint: `Showing ${limited.length} of ${matched.length} matches. Use detail='detailed' for parameter info, or detail='full' for complete schemas.` }
+      ? { hint: `Showing ${limited.length} of ${matched.length} matches. Use detail='full' for complete JSON schemas, or detail='brief' to skip param info.` }
       : {}),
   };
 }
