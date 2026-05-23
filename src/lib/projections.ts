@@ -232,10 +232,15 @@ export function projectImport(imp: Record<string, unknown>): Record<string, unkn
 // --- Event projection ---
 
 export function projectEvent(event: Record<string, unknown>): Record<string, unknown> {
+  // Preserve the spec's `Event.data` payload. Stripping it broke channel-bridge
+  // dispatch routing (channel.ts reads `payload.data.websetId` to route by
+  // webset). Forward the full data field as-is; downstream consumers can shape
+  // it further if needed.
   return {
     id: event.id,
     type: event.type,
     createdAt: event.createdAt,
+    data: event.data ?? null,
   };
 }
 

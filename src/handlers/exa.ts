@@ -5,7 +5,7 @@ import { successResult, errorResult, requireParams } from './types.js';
 export const Schemas = {
   search: z.object({
     query: z.string(),
-    type: z.enum(['neural', 'keyword', 'auto', 'hybrid', 'fast', 'deep']).optional(),
+    type: z.enum(['instant', 'fast', 'auto', 'deep-lite', 'deep', 'deep-reasoning']).optional(),
     numResults: z.number().optional(),
     category: z.enum(['company', 'research paper', 'news', 'pdf', 'github', 'tweet', 'personal site', 'people', 'financial report']).optional(),
     includeDomains: z.array(z.string()).optional(),
@@ -47,10 +47,31 @@ export const Schemas = {
     userLocation: z.string().optional(),
   }),
   getContents: z.object({
-    urls: z.union([z.string().url(), z.array(z.string().url())]),
-    text: z.boolean().optional(),
-    highlights: z.boolean().optional(),
-    summary: z.boolean().optional(),
+    // At least one of `urls` or `ids` is required (refined below).
+    urls: z.union([z.string().url(), z.array(z.string().url())]).optional(),
+    ids: z.array(z.string()).optional(),
+    // Spec accepts boolean OR rich options object for each of text/highlights/summary.
+    text: z.union([
+      z.boolean(),
+      z.object({
+        maxCharacters: z.number().optional(),
+        includeHtmlTags: z.boolean().optional(),
+      }).passthrough(),
+    ]).optional(),
+    highlights: z.union([
+      z.boolean(),
+      z.object({
+        query: z.string().optional(),
+        numSentences: z.number().optional(),
+        highlightsPerUrl: z.number().optional(),
+      }).passthrough(),
+    ]).optional(),
+    summary: z.union([
+      z.boolean(),
+      z.object({
+        query: z.string().optional(),
+      }).passthrough(),
+    ]).optional(),
     livecrawl: z.enum(['never', 'fallback', 'always', 'preferred']).optional(),
     livecrawlTimeout: z.number().optional(),
     maxAgeHours: z.number().optional(),
@@ -58,6 +79,9 @@ export const Schemas = {
     subpageTarget: z.array(z.string()).optional(),
     extras: z.record(z.string(), z.unknown()).optional(),
     context: z.record(z.string(), z.unknown()).optional(),
+  }).refine(data => data.urls !== undefined || data.ids !== undefined, {
+    message: "Either 'urls' or 'ids' is required",
+    path: ['urls'],
   }),
   answer: z.object({
     query: z.string(),
@@ -71,11 +95,11 @@ export const Schemas = {
 
 
 const SEARCH_HINTS = `Common issues:
-- type must be one of: neural, keyword, auto, hybrid, fast, deep
-- category must be: company, research paper, news, pdf, tweet, personal site, financial report, people
+- type must be one of: instant, fast, auto, deep-lite, deep, deep-reasoning
+- category must be: company, research paper, news, personal site, financial report, people
 - contents is an object like {text: true, summary: true}, NOT a boolean
 - Date filters use ISO 8601: "2024-01-01T00:00:00.000Z"
-- additionalQueries only works when type is "deep" (max 5)`;
+- additionalQueries only works when type is "deep" (max 10)`;
 
 export const search: OperationHandler = async (args, exa) => {
   const guard = requireParams('exa.search', args, 'query');
@@ -133,14 +157,11 @@ export const findSimilar: OperationHandler = async (args, exa) => {
 };
 
 export const getContents: OperationHandler = async (args, exa) => {
-  const guard = requireParams('exa.getContents', args, 'urls');
-  if (guard) return guard;
   try {
-    const urls = args.urls as string | string[];
     const opts: Record<string, unknown> = {};
     if (args.text !== undefined) opts.text = args.text;
     if (args.highlights !== undefined) opts.highlights = args.highlights;
-    if (args.summary) opts.summary = args.summary;
+    if (args.summary !== undefined) opts.summary = args.summary;
     if (args.livecrawl) opts.livecrawl = args.livecrawl;
     if (args.livecrawlTimeout) opts.livecrawlTimeout = args.livecrawlTimeout;
     if (args.maxAgeHours) opts.maxAgeHours = args.maxAgeHours;
@@ -148,6 +169,19 @@ export const getContents: OperationHandler = async (args, exa) => {
     if (args.subpageTarget) opts.subpageTarget = args.subpageTarget;
     if (args.extras) opts.extras = args.extras;
     if (args.context !== undefined) opts.context = args.context;
+
+    // ID path: SDK's getContents only sends `urls`, never `ids`. Drop to
+    // rawRequest with the spec's ContentsRequest shape when ids are supplied.
+    if (args.ids !== undefined) {
+      const payload: Record<string, unknown> = { ids: args.ids, ...opts };
+      if (args.urls !== undefined) payload.urls = args.urls;
+      const response = await (exa as any).rawRequest('/contents', 'POST', payload);
+      const json = await response.json();
+      return successResult(json);
+    }
+
+    // URL-only path: existing SDK call.
+    const urls = args.urls as string | string[];
     const hasOpts = Object.keys(opts).length > 0;
     const response = await exa.getContents(urls, hasOpts ? opts as any : undefined);
     return successResult(response);

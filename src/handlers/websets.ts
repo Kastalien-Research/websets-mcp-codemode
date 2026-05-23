@@ -5,7 +5,7 @@ import { projectWebset } from '../lib/projections.js';
 
 export const Schemas = {
   create: z.object({
-    name: z.string().optional(),
+    title: z.string().optional(),
     description: z.string().optional(),
     externalId: z.string().optional(),
     metadata: z.record(z.string()).optional(),
@@ -60,7 +60,7 @@ export const create: OperationHandler = async (args, exa) => {
   try {
     const params: Record<string, unknown> = {};
 
-    if (args.name) params.name = args.name;
+    if (args.title) params.title = args.title;
     if (args.description) params.description = args.description;
     if (args.externalId) params.externalId = args.externalId;
     if (args.metadata) params.metadata = args.metadata;
