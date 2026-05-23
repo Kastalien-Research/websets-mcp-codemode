@@ -15,6 +15,7 @@ import * as tasks from '../handlers/tasks.js';
 import * as research from '../handlers/research.js';
 import * as exaSearch from '../handlers/exa.js';
 import * as github from '../handlers/github.js';
+import * as teams from '../handlers/teams.js';
 import * as store from '../store/operations.js';
 import { applyCompatCoercions, type AppliedCoercion, type CompatMode } from './coercion.js';
 
@@ -108,6 +109,7 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'github.getRepo': { handler: github.getRepo, summary: 'Get a specific repo by owner/name' },
   'github.getUserLanguages': { handler: github.getUserLanguages, summary: 'Get primary language from user repos' },
   'github.verifyProfile': { handler: github.verifyProfile, summary: 'Verify GitHub profile exists with summary data' },
+  'teams.me': { handler: teams.me, summary: 'Get the authenticated team plus current concurrency usage and limits' },
   'store.annotate': { handler: store.annotate, summary: 'Annotate a local item (judgment, tag, note)' },
   'store.getItem': { handler: store.getItem, summary: 'Get item with annotations from local store' },
   'store.listUninvestigated': { handler: store.listUninvestigated, summary: 'List items without judgment annotations' },
@@ -197,6 +199,7 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'github.getRepo': github.Schemas.getRepo,
   'github.getUserLanguages': github.Schemas.getUserLanguages,
   'github.verifyProfile': github.Schemas.verifyProfile,
+  'teams.me': teams.Schemas.me,
   'store.annotate': store.Schemas.annotate,
   'store.getItem': store.Schemas.getItem,
   'store.listUninvestigated': store.Schemas.listUninvestigated,
