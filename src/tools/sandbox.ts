@@ -1,11 +1,18 @@
 import vm from 'node:vm';
 import type { Exa } from 'exa-js';
+import type { OperationContext } from '../handlers/types.js';
 import type { CompatMode } from './coercion.js';
 import { dispatchOperation } from './operations.js';
 
 export interface SandboxOptions {
   timeoutMs?: number;
   compatMode?: CompatMode;
+  /**
+   * Context plumbed into every `callOperation` invocation made from inside
+   * the sandbox. Carries `sendProgress`/`signal`/`silent`. Undefined when
+   * the caller didn't supply a progressToken (e.g. tests, non-MCP entry).
+   */
+  ctx?: OperationContext;
 }
 
 export interface SandboxResult {
@@ -24,6 +31,7 @@ export async function executeInSandbox(
 ): Promise<SandboxResult> {
   const timeoutMs = Math.min(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
   const compatMode = options.compatMode ?? 'strict';
+  const ctx = options.ctx;
   const logs: string[] = [];
 
   const capturedConsole = {
@@ -33,7 +41,7 @@ export async function executeInSandbox(
   };
 
   const callOperation = async (operation: string, args: Record<string, unknown> = {}): Promise<unknown> => {
-    const result = await dispatchOperation(operation, args, exa, compatMode);
+    const result = await dispatchOperation(operation, args, exa, compatMode, ctx);
     if (result.isError) {
       throw new Error(result.content[0]?.text ?? `Operation ${operation} failed`);
     }

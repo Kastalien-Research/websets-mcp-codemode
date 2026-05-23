@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Exa } from 'exa-js';
-import type { OperationHandler, ToolResult } from '../handlers/types.js';
+import type { OperationContext, OperationHandler, ToolResult } from '../handlers/types.js';
 
 import * as websets from '../handlers/websets.js';
 import * as searches from '../handlers/searches.js';
@@ -274,6 +274,7 @@ export async function dispatchOperation(
   args: Record<string, unknown>,
   exa: Exa,
   compatMode: CompatMode = 'strict',
+  ctx?: OperationContext,
 ): Promise<ToolResult> {
   const meta = OPERATIONS[operation];
   if (!meta) {
@@ -322,6 +323,6 @@ export async function dispatchOperation(
     );
   }
 
-  const result = await meta.handler(validatedArgs, exa);
+  const result = await meta.handler(validatedArgs, exa, ctx);
   return withCoercionMetadata(result, coercion.coercions, coercion.warnings);
 }

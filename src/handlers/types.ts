@@ -5,9 +5,26 @@ export type ToolResult = {
   isError?: boolean;
 };
 
+/**
+ * Context plumbed from the MCP transport into operation handlers.
+ * - `sendProgress`: emit `notifications/progress` on the in-flight tool call.
+ *   Present only when the caller supplied a `progressToken` in the request's
+ *   `_meta`. Undefined otherwise (handlers should no-op gracefully).
+ * - `signal`: AbortSignal from the request; honor for cancellation.
+ * - `silent`: caller asked to suppress MCP notifications (e.g. because they
+ *   already receive push delivery via the websets-channel bridge). Handlers
+ *   that would otherwise call `sendProgress` should skip when `silent` is true.
+ */
+export interface OperationContext {
+  sendProgress?: (progress: number, message?: string) => Promise<void>;
+  signal?: AbortSignal;
+  silent?: boolean;
+}
+
 export type OperationHandler = (
   args: Record<string, unknown>,
-  exa: Exa
+  exa: Exa,
+  ctx?: OperationContext,
 ) => Promise<ToolResult>;
 
 export function successResult(data: unknown): ToolResult {
