@@ -7,6 +7,7 @@ import * as searches from '../handlers/searches.js';
 import * as items from '../handlers/items.js';
 import * as enrichments from '../handlers/enrichments.js';
 import * as monitors from '../handlers/monitors.js';
+import * as searchMonitors from '../handlers/searchMonitors.js';
 import * as webhooks from '../handlers/webhooks.js';
 import * as imports from '../handlers/imports.js';
 import * as events from '../handlers/events.js';
@@ -62,6 +63,15 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'monitors.getAll': { handler: monitors.getAll, summary: 'Auto-paginate all monitors' },
   'monitors.runs.list': { handler: monitors.runsList, summary: 'List monitor runs' },
   'monitors.runs.get': { handler: monitors.runsGet, summary: 'Get a monitor run' },
+  'searchMonitors.create': { handler: searchMonitors.create, summary: 'Create a top-level Search Monitor (standalone scheduled search with its own webhook delivery)' },
+  'searchMonitors.get': { handler: searchMonitors.get, summary: 'Get a Search Monitor by ID' },
+  'searchMonitors.list': { handler: searchMonitors.list, summary: 'List Search Monitors (filter by status: active|paused|disabled)' },
+  'searchMonitors.update': { handler: searchMonitors.update, summary: 'Update a Search Monitor' },
+  'searchMonitors.delete': { handler: searchMonitors.del, summary: 'Delete a Search Monitor' },
+  'searchMonitors.trigger': { handler: searchMonitors.trigger, summary: 'Manually trigger an immediate run of a Search Monitor' },
+  'searchMonitors.getAll': { handler: searchMonitors.getAll, summary: 'Auto-paginate all Search Monitors' },
+  'searchMonitors.runs.list': { handler: searchMonitors.runsList, summary: 'List runs for a Search Monitor' },
+  'searchMonitors.runs.get': { handler: searchMonitors.runsGet, summary: 'Get a specific Search Monitor run' },
   'webhooks.create': { handler: webhooks.create, summary: 'Create a webhook' },
   'webhooks.get': { handler: webhooks.get, summary: 'Get a webhook' },
   'webhooks.list': { handler: webhooks.list, summary: 'List webhooks' },
@@ -142,6 +152,15 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'monitors.getAll': monitors.Schemas.getAll,
   'monitors.runs.list': monitors.Schemas.runsList,
   'monitors.runs.get': monitors.Schemas.runsGet,
+  'searchMonitors.create': searchMonitors.Schemas.create,
+  'searchMonitors.get': searchMonitors.Schemas.get,
+  'searchMonitors.list': searchMonitors.Schemas.list,
+  'searchMonitors.update': searchMonitors.Schemas.update,
+  'searchMonitors.delete': searchMonitors.Schemas.del,
+  'searchMonitors.trigger': searchMonitors.Schemas.trigger,
+  'searchMonitors.getAll': searchMonitors.Schemas.getAll,
+  'searchMonitors.runs.list': searchMonitors.Schemas.runsList,
+  'searchMonitors.runs.get': searchMonitors.Schemas.runsGet,
   'webhooks.create': webhooks.Schemas.create,
   'webhooks.get': webhooks.Schemas.get,
   'webhooks.list': webhooks.Schemas.list,
