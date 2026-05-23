@@ -5,14 +5,23 @@ import { projectWebset } from '../lib/projections.js';
 
 export const Schemas = {
   create: z.object({
-    name: z.string().optional(),
+    title: z.string().optional(),
     description: z.string().optional(),
     externalId: z.string().optional(),
     metadata: z.record(z.string()).optional(),
+    // Flat search params (back-compat with existing callers); composed into
+    // a nested `search` object before sending to the SDK.
     searchQuery: z.string().optional(),
     searchCount: z.number().optional(),
     searchCriteria: z.array(z.object({ description: z.string() })).optional(),
     entity: z.object({ type: z.string() }).optional(),
+    // Spec additions on the nested search: graph/import scoping, dedup
+    // exclusions, per-company cap, recall toggle. Sub-object shapes vary;
+    // defer inner validation to the SDK.
+    searchScope: z.array(z.unknown()).optional(),
+    searchExclude: z.array(z.unknown()).optional(),
+    searchMaxPeoplePerCompany: z.number().optional(),
+    searchRecall: z.boolean().optional(),
     enrichments: z.array(
       z.object({
         description: z.string(),
@@ -20,6 +29,10 @@ export const Schemas = {
         options: z.array(z.object({ label: z.string() })).max(150).optional(),
       }),
     ).optional(),
+    // Top-level spec additions: pull from existing websets/imports, exclude
+    // sources entirely from the new webset.
+    import: z.array(z.unknown()).optional(),
+    exclude: z.array(z.unknown()).optional(),
   }),
   get: z.object({
     id: z.string(),
@@ -28,9 +41,12 @@ export const Schemas = {
   list: z.object({
     limit: z.number().optional(),
     cursor: z.string().optional(),
+    // Spec addition: filter by ID, external ID, or title fragment.
+    search: z.string().min(2).max(50).optional(),
   }),
   update: z.object({
     id: z.string(),
+    title: z.string().optional(),
     metadata: z.record(z.string()).optional(),
   }),
   del: z.object({
@@ -60,7 +76,7 @@ export const create: OperationHandler = async (args, exa) => {
   try {
     const params: Record<string, unknown> = {};
 
-    if (args.name) params.name = args.name;
+    if (args.title) params.title = args.title;
     if (args.description) params.description = args.description;
     if (args.externalId) params.externalId = args.externalId;
     if (args.metadata) params.metadata = args.metadata;
@@ -72,12 +88,19 @@ export const create: OperationHandler = async (args, exa) => {
       };
       if (args.searchCriteria) search.criteria = args.searchCriteria;
       if (args.entity) search.entity = args.entity;
+      if (args.searchScope) search.scope = args.searchScope;
+      if (args.searchExclude) search.exclude = args.searchExclude;
+      if (args.searchMaxPeoplePerCompany !== undefined) search.maxPeoplePerCompany = args.searchMaxPeoplePerCompany;
+      if (args.searchRecall !== undefined) search.recall = args.searchRecall;
       params.search = search;
     }
 
     if (args.enrichments && Array.isArray(args.enrichments) && args.enrichments.length > 0) {
       params.enrichments = args.enrichments;
     }
+
+    if (args.import) params.import = args.import;
+    if (args.exclude) params.exclude = args.exclude;
 
     const response = await exa.websets.create(params as any);
     return successResult(projectWebset(response as unknown as Record<string, unknown>));
@@ -104,6 +127,7 @@ export const list: OperationHandler = async (args, exa) => {
     const opts: Record<string, unknown> = {};
     if (args.limit) opts.limit = args.limit;
     if (args.cursor) opts.cursor = args.cursor;
+    if (args.search) opts.search = args.search;
 
     const response = await exa.websets.list(opts as any);
     const raw = response as unknown as Record<string, unknown>;
@@ -122,9 +146,10 @@ export const update: OperationHandler = async (args, exa) => {
   if (guard) return guard;
   try {
     const id = args.id as string;
-    const response = await exa.websets.update(id, {
-      metadata: args.metadata as Record<string, string> | undefined,
-    });
+    const params: Record<string, unknown> = {};
+    if (args.title !== undefined) params.title = args.title;
+    if (args.metadata !== undefined) params.metadata = args.metadata;
+    const response = await exa.websets.update(id, params as any);
     return successResult(projectWebset(response as unknown as Record<string, unknown>));
   } catch (error) {
     return errorResult('websets.update', error);

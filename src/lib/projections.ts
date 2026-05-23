@@ -160,12 +160,21 @@ export function projectSearch(search: Record<string, unknown>): Record<string, u
 // --- Enrichment projection ---
 
 export function projectEnrichment(enrichment: Record<string, unknown>): Record<string, unknown> {
+  // Preserve title, websetId, instructions, options, timestamps. Without
+  // these, callers can't verify what options/instructions are active after
+  // create and can't associate an enrichment with its webset.
   return {
     id: enrichment.id,
+    websetId: enrichment.websetId ?? null,
+    title: enrichment.title ?? null,
     status: enrichment.status,
     description: enrichment.description,
+    instructions: enrichment.instructions ?? null,
     format: enrichment.format,
+    options: enrichment.options ?? null,
     metadata: enrichment.metadata ?? null,
+    createdAt: enrichment.createdAt ?? null,
+    updatedAt: enrichment.updatedAt ?? null,
   };
 }
 
@@ -208,11 +217,17 @@ export function projectWebhook(webhook: Record<string, unknown>): Record<string,
 }
 
 export function projectWebhookAttempt(attempt: Record<string, unknown>): Record<string, unknown> {
+  // Preserve id (so callers can correlate retries) and request/response
+  // bodies (so callers can debug delivery failures). Previously stripped.
   return {
+    id: attempt.id ?? null,
     eventType: attempt.eventType,
     successful: attempt.successful,
     responseStatusCode: attempt.responseStatusCode,
     attemptedAt: attempt.attemptedAt,
+    createdAt: attempt.createdAt ?? null,
+    request: attempt.request ?? null,
+    response: attempt.response ?? null,
   };
 }
 
@@ -232,10 +247,15 @@ export function projectImport(imp: Record<string, unknown>): Record<string, unkn
 // --- Event projection ---
 
 export function projectEvent(event: Record<string, unknown>): Record<string, unknown> {
+  // Preserve the spec's `Event.data` payload. Stripping it broke channel-bridge
+  // dispatch routing (channel.ts reads `payload.data.websetId` to route by
+  // webset). Forward the full data field as-is; downstream consumers can shape
+  // it further if needed.
   return {
     id: event.id,
     type: event.type,
     createdAt: event.createdAt,
+    data: event.data ?? null,
   };
 }
 

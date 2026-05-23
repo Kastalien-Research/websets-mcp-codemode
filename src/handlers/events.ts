@@ -2,16 +2,21 @@ import type { Exa } from 'exa-js';
 import { z } from 'zod';
 import { OperationHandler, successResult, errorResult, requireParams } from './types.js';
 import { projectEvent } from '../lib/projections.js';
+import { EventTypeEnum } from './eventTypes.js';
 
 export const Schemas = {
   list: z.object({
     limit: z.number().optional(),
     cursor: z.string().optional(),
-    types: z.array(z.string()).optional(),
+    types: z.array(EventTypeEnum).optional(),
+    createdBefore: z.string().datetime().optional(),
+    createdAfter: z.string().datetime().optional(),
   }),
   getAll: z.object({
     maxItems: z.number().optional(),
-    types: z.array(z.string()).optional(),
+    types: z.array(EventTypeEnum).optional(),
+    createdBefore: z.string().datetime().optional(),
+    createdAfter: z.string().datetime().optional(),
   }),
   get: z.object({
     id: z.string(),
@@ -25,6 +30,8 @@ export const list: OperationHandler = async (args, exa) => {
     if (args.limit) opts.limit = args.limit;
     if (args.cursor) opts.cursor = args.cursor;
     if (args.types) opts.types = args.types;
+    if (args.createdBefore) opts.createdBefore = args.createdBefore;
+    if (args.createdAfter) opts.createdAfter = args.createdAfter;
 
     const response = await exa.websets.events.list(opts as any);
     const raw = response as unknown as Record<string, unknown>;
@@ -43,6 +50,8 @@ export const getAll: OperationHandler = async (args, exa) => {
     const maxItems = (args.maxItems as number | undefined) ?? 1000;
     const opts: Record<string, unknown> = {};
     if (args.types) opts.types = args.types;
+    if (args.createdBefore) opts.createdBefore = args.createdBefore;
+    if (args.createdAfter) opts.createdAfter = args.createdAfter;
     const results: unknown[] = [];
     for await (const item of exa.websets.events.listAll(opts as any)) {
       results.push(item);
