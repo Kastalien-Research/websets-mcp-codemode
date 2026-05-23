@@ -171,10 +171,17 @@ export const getContents: OperationHandler = async (args, exa) => {
 
     // ID path: SDK's getContents only sends `urls`, never `ids`. Drop to
     // rawRequest with the spec's ContentsRequest shape when ids are supplied.
+    // rawRequest returns a raw Response; throw on non-2xx so the outer
+    // try/catch routes through errorResult (matching the SDK path's
+    // throw-on-failure semantics).
     if (args.ids !== undefined) {
       const payload: Record<string, unknown> = { ids: args.ids, ...opts };
       if (args.urls !== undefined) payload.urls = args.urls;
       const response = await (exa as any).rawRequest('/contents', 'POST', payload);
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new Error(`exa.getContents failed: ${response.status} ${body.slice(0, 200)}`);
+      }
       const json = await response.json();
       return successResult(json);
     }
