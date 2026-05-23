@@ -147,6 +147,14 @@ export const search: OperationHandler = async (args, exa, ctx) => {
         if (typeof chunk?.content === 'string') accumulated.content += chunk.content;
         if (Array.isArray(chunk?.citations)) accumulated.citations.push(...chunk.citations);
       }
+      // Stream completed cleanly (the abort path returns above). If it yielded
+      // zero chunks — a real behavior of Exa's /search streaming endpoint for
+      // many query shapes today — fall back to the non-streaming call so the
+      // caller doesn't silently lose results.
+      if (chunkIndex === 0) {
+        const response = await exa.search(args.query as string, hasOpts ? opts as any : undefined);
+        return successResult(response);
+      }
       return successResult(accumulated);
     }
 
@@ -258,6 +266,15 @@ export const answer: OperationHandler = async (args, exa, ctx) => {
         chunkIndex += 1;
         if (typeof chunk?.content === 'string') accumulated.content += chunk.content;
         if (Array.isArray(chunk?.citations)) accumulated.citations.push(...chunk.citations);
+      }
+      // Stream completed cleanly (the abort path returns above). If it yielded
+      // zero chunks, fall back to the non-streaming call. Defensive symmetry
+      // with the search handler — streamAnswer reliably emits content today,
+      // but if Exa ever stops emitting for some query class, we don't want
+      // stream:true to silently return an empty answer.
+      if (chunkIndex === 0) {
+        const response = await exa.answer(args.query as string, hasOpts ? opts as any : undefined);
+        return successResult(response);
       }
       return successResult(accumulated);
     }

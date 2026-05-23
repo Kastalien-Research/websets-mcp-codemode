@@ -109,6 +109,27 @@ describe('exa.answer streaming', () => {
 
     warnSpy.mockRestore();
   });
+
+  it('falls back to non-streaming when stream yields zero chunks', async () => {
+    async function* emptyStream() {
+      // yields nothing
+    }
+    const nonStreamingResult = { answer: 'The fallback answer', citations: [{ id: 'f1' }] };
+    const exa = {
+      streamAnswer: vi.fn().mockReturnValue(emptyStream()),
+      answer: vi.fn().mockResolvedValue(nonStreamingResult),
+    } as unknown as Exa;
+    const ctx = makeCtx();
+
+    const result = await exaHandlers.answer({ query: 'x', stream: true }, exa, ctx);
+
+    expect((exa as any).streamAnswer).toHaveBeenCalledTimes(1);
+    expect((exa as any).answer).toHaveBeenCalledTimes(1);
+    expect(ctx.sendProgress).not.toHaveBeenCalled();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.answer).toBe('The fallback answer');
+    expect(parsed.citations).toHaveLength(1);
+  });
 });
 
 describe('exa.search streaming', () => {
@@ -148,6 +169,42 @@ describe('exa.search streaming', () => {
 
     expect((exa as any).streamSearch).not.toHaveBeenCalled();
     expect((exa as any).search).toHaveBeenCalled();
+  });
+
+  it('falls back to non-streaming when stream yields zero chunks', async () => {
+    async function* emptyStream() {
+      // yields nothing — observed behavior of Exa /search streaming today
+    }
+    const nonStreamingResult = {
+      requestId: 'req_1',
+      results: [
+        { id: 'r1', title: 'Real Result 1', url: 'https://x' },
+        { id: 'r2', title: 'Real Result 2', url: 'https://y' },
+      ],
+    };
+    const exa = {
+      streamSearch: vi.fn().mockReturnValue(emptyStream()),
+      search: vi.fn().mockResolvedValue(nonStreamingResult),
+    } as unknown as Exa;
+    const ctx = makeCtx();
+
+    const result = await exaHandlers.search(
+      { query: 'MCP servers', stream: true, outputSchema: { type: 'object' } },
+      exa,
+      ctx,
+    );
+
+    expect((exa as any).streamSearch).toHaveBeenCalledTimes(1);
+    expect((exa as any).search).toHaveBeenCalledTimes(1);
+    // Fallback must pass the same query + opts as the streaming call.
+    const [fallbackQuery, fallbackOpts] = (exa as any).search.mock.calls[0];
+    expect(fallbackQuery).toBe('MCP servers');
+    expect(fallbackOpts).toMatchObject({ outputSchema: { type: 'object' } });
+    expect(ctx.sendProgress).not.toHaveBeenCalled();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.results).toHaveLength(2);
+    expect(parsed.requestId).toBe('req_1');
   });
 });
 
