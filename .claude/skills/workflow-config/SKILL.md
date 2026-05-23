@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: Read, Write
 ---
 
-Manage workflow configurations at `/workspaces/schwartz13/data/workflow-configs.json`.
+Manage workflow configurations at `data/workflow-configs.json` (relative to the project root).
 
 ## Commands
 

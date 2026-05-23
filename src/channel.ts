@@ -35,7 +35,7 @@ const server = new Server(
 
 When a channel event arrives, follow this protocol:
 
-1. **Read the workflow config**: Use the Read tool on /workspaces/schwartz13/data/workflow-configs.json
+1. **Read the workflow config**: Use the Read tool on data/workflow-configs.json (relative to the project root)
 2. **Look up the webset_id** in config.routes
 3. **If a matching route exists**:
    a. Check if the event_type matches any key in the route's "on" map
