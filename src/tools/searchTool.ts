@@ -9,8 +9,8 @@ const DOMAINS = [
 
 const inputSchema = z.object({
   query: z.string().describe('Search query: keyword, domain name, or description'),
-  detail: z.enum(['brief', 'detailed', 'full']).optional().default('brief')
-    .describe('Level of detail: brief (names+summaries), detailed (with params), full (complete schemas)'),
+  detail: z.enum(['brief', 'detailed', 'full']).optional().default('detailed')
+    .describe('Level of detail: brief (names+summaries only), detailed (with params, descriptions, defaults — the default), full (complete JSON schemas)'),
   domain: z.enum(DOMAINS).optional()
     .describe('Filter to a specific domain'),
   limit: z.number().optional().default(10)
