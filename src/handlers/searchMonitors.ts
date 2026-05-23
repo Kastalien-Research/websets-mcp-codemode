@@ -48,6 +48,9 @@ export const Schemas = {
   update: z.object({
     id: z.string(),
     name: z.string().optional(),
+    // Pause/resume control — primary monitor-lifecycle action. Same enum
+    // values as list filter; SDK rejects illegal transitions at API call time.
+    status: z.enum(['active', 'paused', 'disabled']).optional(),
     search: SearchMonitorSearchSchema.optional(),
     trigger: SearchMonitorTriggerSchema.optional(),
     outputSchema: z.record(z.string(), z.unknown()).optional(),
@@ -176,6 +179,7 @@ export const update: OperationHandler = async (args, exa) => {
     const id = args.id as string;
     const params: Record<string, unknown> = {};
     if (args.name !== undefined) params.name = args.name;
+    if (args.status !== undefined) params.status = args.status;
     if (args.search) params.search = args.search;
     if (args.trigger) params.trigger = args.trigger;
     if (args.outputSchema !== undefined) params.outputSchema = args.outputSchema;
