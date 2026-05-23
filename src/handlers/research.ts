@@ -43,12 +43,45 @@ export const create: OperationHandler = async (args, exa) => {
   }
 };
 
-export const get: OperationHandler = async (args, exa) => {
+export const get: OperationHandler = async (args, exa, ctx) => {
   const guard = requireParams('research.get', args, 'researchId');
   if (guard) return guard;
   try {
     const opts: Record<string, unknown> = {};
     if (args.events !== undefined) opts.events = args.events;
+
+    if (args.stream === true) {
+      // research.get returns Promise<AsyncGenerator<...>> when stream:true —
+      // outer await first, then iterate.
+      const gen = await (exa as any).research.get(args.researchId as string, {
+        ...opts,
+        stream: true,
+      });
+      let chunkIndex = 0;
+      let finalOutput: Record<string, unknown> | null = null;
+      const events: Record<string, unknown>[] = [];
+      for await (const event of gen as AsyncIterable<any>) {
+        if (ctx?.signal?.aborted) {
+          return successResult({ researchId: args.researchId, aborted: true, events });
+        }
+        if (ctx?.sendProgress && !ctx.silent) {
+          try {
+            await ctx.sendProgress(chunkIndex, JSON.stringify(event));
+          } catch (err) {
+            console.warn('[research.get] sendProgress failed; continuing stream', err);
+          }
+        }
+        chunkIndex += 1;
+        events.push(event);
+        if (event?.eventType === 'research-output') finalOutput = event;
+      }
+      return successResult({
+        researchId: args.researchId,
+        output: finalOutput,
+        events,
+      });
+    }
+
     const hasOpts = Object.keys(opts).length > 0;
     const response = await exa.research.get(args.researchId as string, hasOpts ? opts as any : undefined);
     return successResult(projectResearch(response as unknown as Record<string, unknown>));
