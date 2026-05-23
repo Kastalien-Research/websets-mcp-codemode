@@ -100,7 +100,7 @@ const SEARCH_HINTS = `Common issues:
 - Date filters use ISO 8601: "2024-01-01T00:00:00.000Z"
 - additionalQueries only works when type is "deep" (max 10)`;
 
-export const search: OperationHandler = async (args, exa) => {
+export const search: OperationHandler = async (args, exa, ctx) => {
   const guard = requireParams('exa.search', args, 'query');
   if (guard) return guard;
   try {
@@ -120,8 +120,36 @@ export const search: OperationHandler = async (args, exa) => {
     if (args.moderation !== undefined) opts.moderation = args.moderation;
     if (args.compliance) opts.compliance = args.compliance;
     if (args.outputSchema) opts.outputSchema = args.outputSchema;
-    // NOTE: args.stream is consumed by Phase 6 streaming wire-up; ignored here.
     const hasOpts = Object.keys(opts).length > 0;
+
+    if (args.stream === true) {
+      const gen = (exa as any).streamSearch(
+        args.query as string,
+        hasOpts ? (opts as any) : undefined,
+      );
+      const accumulated: { content: string; citations: unknown[] } = {
+        content: '',
+        citations: [],
+      };
+      let chunkIndex = 0;
+      for await (const chunk of gen as AsyncIterable<any>) {
+        if (ctx?.signal?.aborted) {
+          return successResult({ ...accumulated, aborted: true });
+        }
+        if (ctx?.sendProgress && !ctx.silent) {
+          try {
+            await ctx.sendProgress(chunkIndex, JSON.stringify(chunk));
+          } catch (err) {
+            console.warn('[exa.search] sendProgress failed; continuing stream', err);
+          }
+        }
+        chunkIndex += 1;
+        if (typeof chunk?.content === 'string') accumulated.content += chunk.content;
+        if (Array.isArray(chunk?.citations)) accumulated.citations.push(...chunk.citations);
+      }
+      return successResult(accumulated);
+    }
+
     const response = await exa.search(args.query as string, hasOpts ? opts as any : undefined);
     return successResult(response);
   } catch (error) {
@@ -196,7 +224,7 @@ export const getContents: OperationHandler = async (args, exa) => {
   }
 };
 
-export const answer: OperationHandler = async (args, exa) => {
+export const answer: OperationHandler = async (args, exa, ctx) => {
   const guard = requireParams('exa.answer', args, 'query');
   if (guard) return guard;
   try {
@@ -204,8 +232,36 @@ export const answer: OperationHandler = async (args, exa) => {
     if (args.text !== undefined) opts.text = args.text;
     if (args.outputSchema) opts.outputSchema = args.outputSchema;
     if (args.userLocation) opts.userLocation = args.userLocation;
-    // NOTE: args.stream is consumed by Phase 6 streaming wire-up; ignored here.
     const hasOpts = Object.keys(opts).length > 0;
+
+    if (args.stream === true) {
+      const gen = (exa as any).streamAnswer(
+        args.query as string,
+        hasOpts ? (opts as any) : undefined,
+      );
+      const accumulated: { content: string; citations: unknown[] } = {
+        content: '',
+        citations: [],
+      };
+      let chunkIndex = 0;
+      for await (const chunk of gen as AsyncIterable<any>) {
+        if (ctx?.signal?.aborted) {
+          return successResult({ ...accumulated, aborted: true });
+        }
+        if (ctx?.sendProgress && !ctx.silent) {
+          try {
+            await ctx.sendProgress(chunkIndex, JSON.stringify(chunk));
+          } catch (err) {
+            console.warn('[exa.answer] sendProgress failed; continuing stream', err);
+          }
+        }
+        chunkIndex += 1;
+        if (typeof chunk?.content === 'string') accumulated.content += chunk.content;
+        if (Array.isArray(chunk?.citations)) accumulated.citations.push(...chunk.citations);
+      }
+      return successResult(accumulated);
+    }
+
     const response = await exa.answer(args.query as string, hasOpts ? opts as any : undefined);
     return successResult(response);
   } catch (error) {
