@@ -7,7 +7,7 @@ export const Schemas = {
     query: z.string(),
     type: z.enum(['instant', 'fast', 'auto', 'deep-lite', 'deep', 'deep-reasoning']).optional(),
     numResults: z.number().optional(),
-    category: z.enum(['company', 'research paper', 'news', 'pdf', 'github', 'tweet', 'personal site', 'people', 'financial report']).optional(),
+    category: z.enum(['company', 'research paper', 'news', 'personal site', 'financial report', 'people']).optional(),
     includeDomains: z.array(z.string()).optional(),
     excludeDomains: z.array(z.string()).optional(),
     startCrawlDate: z.string().optional(),
@@ -15,16 +15,16 @@ export const Schemas = {
     startPublishedDate: z.string().optional(),
     endPublishedDate: z.string().optional(),
     contents: z.object({
-      text: z.boolean().optional(),
-      highlights: z.boolean().optional(),
-      summary: z.boolean().optional(),
+      text: z.union([z.boolean(), z.record(z.string(), z.unknown())]).optional(),
+      highlights: z.union([z.boolean(), z.record(z.string(), z.unknown())]).optional(),
+      summary: z.union([z.boolean(), z.record(z.string(), z.unknown())]).optional(),
     }).optional(),
-    includeText: z.array(z.string()).optional(),
-    excludeText: z.array(z.string()).optional(),
-    additionalQueries: z.array(z.string()).max(5).optional(),
+    additionalQueries: z.array(z.string()).max(10).optional(),
     userLocation: z.string().optional(),
     moderation: z.boolean().optional(),
-    useAutoprompt: z.boolean().optional(),
+    stream: z.boolean().optional(),
+    compliance: z.enum(['hipaa']).optional(),
+    outputSchema: z.record(z.string(), z.unknown()).optional(),
   }),
   findSimilar: z.object({
     url: z.string().url(),
@@ -86,10 +86,9 @@ export const Schemas = {
   answer: z.object({
     query: z.string(),
     text: z.boolean().optional(),
-    model: z.string().optional(),
-    systemPrompt: z.string().optional(),
     outputSchema: z.record(z.string(), z.unknown()).optional(),
     userLocation: z.string().optional(),
+    stream: z.boolean().optional(),
   }),
 };
 
@@ -116,12 +115,12 @@ export const search: OperationHandler = async (args, exa) => {
     if (args.startPublishedDate) opts.startPublishedDate = args.startPublishedDate;
     if (args.endPublishedDate) opts.endPublishedDate = args.endPublishedDate;
     if (args.contents) opts.contents = args.contents;
-    if (args.includeText) opts.includeText = args.includeText;
-    if (args.excludeText) opts.excludeText = args.excludeText;
     if (args.additionalQueries) opts.additionalQueries = args.additionalQueries;
     if (args.userLocation) opts.userLocation = args.userLocation;
     if (args.moderation !== undefined) opts.moderation = args.moderation;
-    if (args.useAutoprompt !== undefined) opts.useAutoprompt = args.useAutoprompt;
+    if (args.compliance) opts.compliance = args.compliance;
+    if (args.outputSchema) opts.outputSchema = args.outputSchema;
+    // NOTE: args.stream is consumed by Phase 6 streaming wire-up; ignored here.
     const hasOpts = Object.keys(opts).length > 0;
     const response = await exa.search(args.query as string, hasOpts ? opts as any : undefined);
     return successResult(response);
@@ -196,10 +195,9 @@ export const answer: OperationHandler = async (args, exa) => {
   try {
     const opts: Record<string, unknown> = {};
     if (args.text !== undefined) opts.text = args.text;
-    if (args.model) opts.model = args.model;
-    if (args.systemPrompt) opts.systemPrompt = args.systemPrompt;
     if (args.outputSchema) opts.outputSchema = args.outputSchema;
     if (args.userLocation) opts.userLocation = args.userLocation;
+    // NOTE: args.stream is consumed by Phase 6 streaming wire-up; ignored here.
     const hasOpts = Object.keys(opts).length > 0;
     const response = await exa.answer(args.query as string, hasOpts ? opts as any : undefined);
     return successResult(response);

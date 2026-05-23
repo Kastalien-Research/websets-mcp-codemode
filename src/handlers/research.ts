@@ -11,6 +11,7 @@ export const Schemas = {
   get: z.object({
     researchId: z.string(),
     events: z.boolean().optional(),
+    stream: z.boolean().optional(),
   }),
   list: z.object({
     cursor: z.string().optional(),
