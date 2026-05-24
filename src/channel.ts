@@ -118,6 +118,17 @@ const recentEventIds = new Map<string, number>();
 const EVENT_DEDUP_WINDOW_MS = 60_000;
 
 const itemCoalesceTimers = new Map<string, NodeJS.Timeout>();
+// Per-item raw-event retention keyed by event_type so the fallback path at
+// timer-fire can still emit the exact raw type a route opted into. A single
+// "latest event" pointer loses semantic fidelity: a config of
+// events:["webset.item.created"] would silently drop once a later
+// webset.item.enriched event overwrote the slot. Keeping one entry per
+// type means the timer can pick the raw event matching the allowlist
+// regardless of arrival order.
+const itemEventsByType = new Map<string /* itemId */, Map<string /* type */, ChannelEvent>>();
+// Pointer to the most recently received event per item — used to drive
+// the synthesis decision (decideItemReady reads the cumulative latest
+// payload, which carries the union of enrichments + evaluations).
 const itemLatestEvent = new Map<string, ChannelEvent>();
 // Quiescence window for per-item synthesis. Default 60s — bumped from 5s
 // because Exa enrichment jobs for an item arrive ~10–60s apart. 5s was
@@ -323,13 +334,23 @@ async function pushChannelNotification(event: ChannelEvent): Promise<void> {
     const data = (event.payload?.data ?? {}) as Record<string, unknown>;
     const itemId = data.id as string | undefined;
     if (itemId) {
+      // Retain BOTH the most recent event (for synthesis input — it carries
+      // the cumulative latest enrichments + evaluations) AND one entry per
+      // raw event_type (for fallback emission when the synthetic is
+      // disallowed but a raw type is opted-in).
       itemLatestEvent.set(itemId, event);
+      const byType = itemEventsByType.get(itemId) ?? new Map<string, ChannelEvent>();
+      byType.set(event.type, event);
+      itemEventsByType.set(itemId, byType);
+
       const existing = itemCoalesceTimers.get(itemId);
       if (existing) clearTimeout(existing);
       const timer = setTimeout(() => {
         itemCoalesceTimers.delete(itemId);
         const finalEvent = itemLatestEvent.get(itemId);
+        const rawByType = itemEventsByType.get(itemId);
         itemLatestEvent.delete(itemId);
+        itemEventsByType.delete(itemId);
         if (!finalEvent) return;
 
         const decision = decideItemReady(finalEvent);
@@ -339,23 +360,28 @@ async function pushChannelNotification(event: ChannelEvent): Promise<void> {
           ...finalEvent,
           type: decision.syntheticType,
         };
-        // Allowlist precedence (preserves backward-compat for raw-event
-        // consumers):
-        //   1. If config allows the synthetic type → emit synthetic.
-        //      Most users want webset.item.ready as the single "this item
-        //      is done enriching and passed the gate" signal.
-        //   2. Else if config allows the raw event type (e.g. legacy
-        //      route with events: ["webset.item.created"]) → emit the raw
-        //      event with its original type. The payload is the latest
-        //      cumulative state from the coalescence window — the same
-        //      coalescence the pre-PR-24 bridge applied, just with a
-        //      longer window. Raw consumers were never seeing every
-        //      individual enrichment anyway.
-        //   3. Else → drop. Config explicitly opted out of both types.
+        // Allowlist precedence:
+        //   1. If config allows the synthetic type → emit synthetic
+        //      (new default; most users want webset.item.ready as the
+        //      single "item is done + passed gate" signal).
+        //   2. Else walk the raw event types we observed in this window
+        //      and emit the first one the config allows. The retention is
+        //      per-type, not just "latest" — a route configured with
+        //      events:["webset.item.created"] gets its created event
+        //      back even if an enriched event also arrived in the window.
+        //      Iteration order prefers .enriched first (richer payload)
+        //      then .created (initial event).
+        //   3. Else drop (config opted out of both raw and synthetic).
         if (isAllowed(synthetic)) {
           void emitNotification(synthetic);
-        } else if (isAllowed(finalEvent)) {
-          void emitNotification(finalEvent);
+        } else if (rawByType) {
+          for (const rawType of ['webset.item.enriched', 'webset.item.created']) {
+            const rawEvent = rawByType.get(rawType);
+            if (rawEvent && isAllowed(rawEvent)) {
+              void emitNotification(rawEvent);
+              return;
+            }
+          }
         }
       }, ITEM_COALESCE_DELAY_MS);
       itemCoalesceTimers.set(itemId, timer);
