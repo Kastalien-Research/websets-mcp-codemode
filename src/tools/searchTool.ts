@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { searchCatalog } from './catalog.js';
+import { workflowMetadata } from '../workflows/types.js';
+import type { ResourceLinkContent } from '../handlers/types.js';
 
 const DOMAINS = [
   'websets', 'searches', 'items', 'enrichments', 'monitors',
@@ -42,8 +44,31 @@ export function registerSearchTool(server: McpServer): void {
         limit: parsed.limit,
       });
 
+      // Per spec ("Architectural change: embedded resource_link"): when results
+      // include workflow-domain entries (named `workflow.<key>`), append a
+      // resource_link block per entry so discovery and docs land in one
+      // round-trip. Non-workflow results pass through unchanged.
+      const links: ResourceLinkContent[] = [];
+      for (const entry of result.results) {
+        const name = entry.name;
+        if (typeof name !== 'string' || !name.startsWith('workflow.')) continue;
+        const key = name.slice('workflow.'.length);
+        const meta = workflowMetadata.get(key);
+        if (!meta) continue;
+        links.push({
+          type: 'resource_link',
+          uri: `workflow://${key}`,
+          name: meta.title,
+          mimeType: 'text/markdown',
+          description: meta.description.split('.')[0],
+        });
+      }
+
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+          ...links,
+        ],
       };
     },
   );

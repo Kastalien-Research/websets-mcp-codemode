@@ -1,7 +1,23 @@
 import type { Exa } from 'exa-js';
 
+export type TextContent = { type: 'text'; text: string };
+
+export type ResourceLinkContent = {
+  type: 'resource_link';
+  uri: string;
+  name: string;
+  mimeType?: string;
+  description?: string;
+};
+
+/**
+ * Tool responses always lead with a `TextContent` block (callers rely on
+ * `content[0].text` being the JSON/error payload). Additional blocks can be
+ * `TextContent` or `ResourceLinkContent` — e.g. resource_link enrichment
+ * appended by `successResultWithLinks` per the spec.
+ */
 export type ToolResult = {
-  content: Array<{ type: 'text'; text: string }>;
+  content: [TextContent, ...Array<TextContent | ResourceLinkContent>];
   isError?: boolean;
 };
 
@@ -30,6 +46,23 @@ export type OperationHandler = (
 export function successResult(data: unknown): ToolResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+  };
+}
+
+/**
+ * Build a success result with extra `resource_link` content blocks appended
+ * after the JSON text. Empty link arrays produce only the text block — never
+ * trailing placeholder entries.
+ *
+ * See specs/spec-update-052226/workflows-as-prompts-and-resources.md
+ * ("Architectural change: embedded resource_link") for the motivation.
+ */
+export function successResultWithLinks(data: unknown, links: ResourceLinkContent[]): ToolResult {
+  return {
+    content: [
+      { type: 'text', text: JSON.stringify(data, null, 2) },
+      ...links,
+    ],
   };
 }
 
