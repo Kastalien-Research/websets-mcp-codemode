@@ -13,6 +13,7 @@ import * as imports from '../handlers/imports.js';
 import * as events from '../handlers/events.js';
 import * as tasks from '../handlers/tasks.js';
 import * as research from '../handlers/research.js';
+import * as agentRuns from '../handlers/agentRuns.js';
 import * as exaSearch from '../handlers/exa.js';
 import * as github from '../handlers/github.js';
 import * as teams from '../handlers/teams.js';
@@ -100,6 +101,9 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'research.get': { handler: research.get, summary: 'Get research status' },
   'research.list': { handler: research.list, summary: 'List research requests' },
   'research.pollUntilFinished': { handler: research.pollUntilFinished, summary: 'Poll until research completes' },
+  'agentRuns.create': { handler: agentRuns.create, summary: 'Create an Agent run (beta). Pass stream:true for SSE-streamed lifecycle events via progress notifications.' },
+  'agentRuns.get': { handler: agentRuns.get, summary: 'Get an Agent run by ID' },
+  'agentRuns.list': { handler: agentRuns.list, summary: 'List Agent runs for the team (cursor + limit)' },
   'exa.search': { handler: exaSearch.search, summary: 'Instant web search' },
   'exa.findSimilar': { handler: exaSearch.findSimilar, summary: 'Find pages similar to a URL' },
   'exa.getContents': { handler: exaSearch.getContents, summary: 'Extract content from URLs' },
@@ -190,6 +194,9 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'research.get': research.Schemas.get,
   'research.list': research.Schemas.list,
   'research.pollUntilFinished': research.Schemas.pollUntilFinished,
+  'agentRuns.create': agentRuns.Schemas.create,
+  'agentRuns.get': agentRuns.Schemas.get,
+  'agentRuns.list': agentRuns.Schemas.list,
   'exa.search': exaSearch.Schemas.search,
   'exa.findSimilar': exaSearch.Schemas.findSimilar,
   'exa.getContents': exaSearch.Schemas.getContents,
