@@ -90,7 +90,7 @@ export function registerExecuteTool(
       };
 
       try {
-        const { result, logs } = await executeInSandbox(parsed.code, exa, {
+        const { result, logs, resourceLinks } = await executeInSandbox(parsed.code, exa, {
           timeoutMs: Math.min(parsed.timeout, 120_000),
           compatMode,
           ctx,
@@ -99,8 +99,18 @@ export function registerExecuteTool(
         const output: Record<string, unknown> = { result };
         if (logs.length > 0) output.logs = logs;
 
+        // Forward any resource_link blocks the inner handlers attached
+        // (e.g. tasks.create returning a workflow:// link). Without this
+        // append the MCP client never sees them: the sandbox unwraps only
+        // content[0].text into the JS return value, and the execute tool
+        // would otherwise return only that text. Surfacing them here gives
+        // the model inline access to workflow docs / spec resources
+        // exactly when it dispatches the corresponding operation.
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
+          content: [
+            { type: 'text' as const, text: JSON.stringify(output, null, 2) },
+            ...resourceLinks,
+          ],
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

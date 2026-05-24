@@ -1,6 +1,6 @@
 import vm from 'node:vm';
 import type { Exa } from 'exa-js';
-import type { OperationContext } from '../handlers/types.js';
+import type { OperationContext, ResourceLinkContent } from '../handlers/types.js';
 import type { CompatMode } from './coercion.js';
 import { dispatchOperation } from './operations.js';
 
@@ -18,6 +18,17 @@ export interface SandboxOptions {
 export interface SandboxResult {
   result: unknown;
   logs: string[];
+  /**
+   * `resource_link` content blocks attached by handlers (e.g.
+   * `tasks.create` returning a workflow:// link) and accumulated across
+   * every `callOperation` invocation in this sandbox run. The caller
+   * (executeTool.ts) appends these to the outer MCP tool response so
+   * clients see them inline with the execute tool's output. Without
+   * this forwarding the links are silently dropped — the sandbox
+   * unwraps only `content[0].text` into the JS return value and any
+   * additional content blocks would otherwise be lost.
+   */
+  resourceLinks: ResourceLinkContent[];
 }
 
 const MAX_SETTIMEOUT_MS = 5000;
@@ -33,6 +44,7 @@ export async function executeInSandbox(
   const compatMode = options.compatMode ?? 'strict';
   const ctx = options.ctx;
   const logs: string[] = [];
+  const resourceLinks: ResourceLinkContent[] = [];
 
   const capturedConsole = {
     log: (...args: unknown[]) => logs.push(args.map(String).join(' ')),
@@ -44,6 +56,17 @@ export async function executeInSandbox(
     const result = await dispatchOperation(operation, args, exa, compatMode, ctx);
     if (result.isError) {
       throw new Error(result.content[0]?.text ?? `Operation ${operation} failed`);
+    }
+    // Collect any resource_link blocks the handler attached after the
+    // primary text block (e.g. tasks.create returning a workflow:// link).
+    // The sandbox unwraps content[0].text into the JS return value, so
+    // additional content blocks would otherwise be silently dropped.
+    // We accumulate them here for executeTool to forward to the MCP client.
+    for (let i = 1; i < result.content.length; i++) {
+      const block = result.content[i];
+      if (block && (block as { type?: string }).type === 'resource_link') {
+        resourceLinks.push(block as ResourceLinkContent);
+      }
     }
     const text = result.content[0]?.text;
     if (!text) return null;
@@ -102,5 +125,5 @@ export async function executeInSandbox(
 
   const result = await Promise.race([resultPromise, timeoutPromise]);
 
-  return { result, logs };
+  return { result, logs, resourceLinks };
 }

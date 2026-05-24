@@ -8,15 +8,18 @@ import * as monitors from '../monitors.js';
 import * as webhooks from '../webhooks.js';
 import * as imports from '../imports.js';
 import * as events from '../events.js';
+import type { ToolResult } from '../types.js';
 
 // Dummy Exa — validation fires before any SDK call, so no real client needed
 const exa = {} as Exa;
 
-function expectMissingParams(result: { content: Array<{ text: string }>; isError?: boolean }, operation: string, ...params: string[]) {
+function expectMissingParams(result: ToolResult, operation: string, ...params: string[]) {
   expect(result.isError).toBe(true);
-  expect(result.content[0].text).toContain(`Missing required parameter(s) for ${operation}`);
+  const first = result.content[0];
+  if (first.type !== 'text') throw new Error('expected leading TextContent');
+  expect(first.text).toContain(`Missing required parameter(s) for ${operation}`);
   for (const p of params) {
-    expect(result.content[0].text).toContain(p);
+    expect(first.text).toContain(p);
   }
 }
 
