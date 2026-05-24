@@ -42,7 +42,20 @@ export const Schemas = {
 function agentFetch(
   exa: unknown,
   path: string,
-  init: { method: string; body?: unknown; accept?: 'json' | 'sse' } = { method: 'GET' },
+  init: {
+    method: string;
+    body?: unknown;
+    accept?: 'json' | 'sse';
+    /**
+     * AbortSignal threaded into the underlying fetch so cancellation
+     * propagates to the network layer — not just to per-frame iteration
+     * checks inside readSseEvents. Without this, a hung response
+     * (header wait, quiet SSE interval, idle TCP) would keep the
+     * connection open and the call would never settle even after the
+     * caller aborts.
+     */
+    signal?: AbortSignal;
+  } = { method: 'GET' },
 ): Promise<Response> {
   const client = exa as { baseURL: string; headers: unknown };
   const headers: Record<string, string> = {
@@ -67,6 +80,7 @@ function agentFetch(
     method: init.method,
     headers,
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+    signal: init.signal,
   });
 }
 
@@ -138,6 +152,7 @@ export const create: OperationHandler = async (args, exa, ctx) => {
         method: 'POST',
         body,
         accept: 'sse',
+        signal: ctx?.signal,
       });
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
@@ -190,6 +205,7 @@ export const create: OperationHandler = async (args, exa, ctx) => {
     const response = await agentFetch(exa, AGENT_ENDPOINT, {
       method: 'POST',
       body,
+      signal: ctx?.signal,
     });
     if (!response.ok) {
       const errText = await response.text().catch(() => '');

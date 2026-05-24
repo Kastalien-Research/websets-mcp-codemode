@@ -218,6 +218,38 @@ describe('agentRuns.create — streaming', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('400');
   });
+
+  it('threads ctx.signal into the underlying streaming fetch (network-level abort)', async () => {
+    const controller = new AbortController();
+    fetchSpy.mockResolvedValueOnce(
+      sseResponse([
+        'event: agent_run.created\ndata: {"id":"r1","object":"agent_run","status":"running"}\n\n',
+      ]),
+    );
+
+    await agentRuns.create(
+      { query: 'x', stream: true },
+      fakeExa(),
+      makeCtx({ signal: controller.signal }),
+    );
+
+    const init = (fetchSpy.mock.calls[0] as any)[1] as RequestInit;
+    expect(init.signal).toBe(controller.signal);
+  });
+
+  it('threads ctx.signal into the underlying non-streaming fetch', async () => {
+    const controller = new AbortController();
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ id: 'r1', status: 'running' }));
+
+    await agentRuns.create(
+      { query: 'x' },
+      fakeExa(),
+      makeCtx({ signal: controller.signal }),
+    );
+
+    const init = (fetchSpy.mock.calls[0] as any)[1] as RequestInit;
+    expect(init.signal).toBe(controller.signal);
+  });
 });
 
 describe('agentRuns.get', () => {
