@@ -4,7 +4,7 @@ import { searchCatalog } from './catalog.js';
 
 const DOMAINS = [
   'websets', 'searches', 'items', 'enrichments', 'monitors',
-  'webhooks', 'imports', 'events', 'tasks', 'research', 'exa', 'workflow',
+  'webhooks', 'imports', 'events', 'tasks', 'research', 'agentRuns', 'exa', 'workflow',
 ] as const;
 
 const inputSchema = z.object({
