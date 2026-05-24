@@ -339,10 +339,24 @@ async function pushChannelNotification(event: ChannelEvent): Promise<void> {
           ...finalEvent,
           type: decision.syntheticType,
         };
-        // Re-check allowlist against the synthetic type — per-webset config
-        // may have opted out of webset.item.ready specifically.
-        if (!isAllowed(synthetic)) return;
-        void emitNotification(synthetic);
+        // Allowlist precedence (preserves backward-compat for raw-event
+        // consumers):
+        //   1. If config allows the synthetic type → emit synthetic.
+        //      Most users want webset.item.ready as the single "this item
+        //      is done enriching and passed the gate" signal.
+        //   2. Else if config allows the raw event type (e.g. legacy
+        //      route with events: ["webset.item.created"]) → emit the raw
+        //      event with its original type. The payload is the latest
+        //      cumulative state from the coalescence window — the same
+        //      coalescence the pre-PR-24 bridge applied, just with a
+        //      longer window. Raw consumers were never seeing every
+        //      individual enrichment anyway.
+        //   3. Else → drop. Config explicitly opted out of both types.
+        if (isAllowed(synthetic)) {
+          void emitNotification(synthetic);
+        } else if (isAllowed(finalEvent)) {
+          void emitNotification(finalEvent);
+        }
       }, ITEM_COALESCE_DELAY_MS);
       itemCoalesceTimers.set(itemId, timer);
       return;
