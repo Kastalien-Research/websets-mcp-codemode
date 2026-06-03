@@ -9,8 +9,118 @@ import {
   summarizeItem,
   validateRequired,
   withSummary,
+  type StepTiming,
 } from './helpers.js';
 import { filterAndProjectItems } from '../lib/projections.js';
+
+export interface AdversarialInput {
+  thesisQuery: string;
+  antithesisQuery: string;
+  entity?: { type: string };
+  count: number;
+  enrichments?: Array<Record<string, unknown>>;
+  timeoutMs: number;
+  /** Denominator for progress reporting (adversarial uses 5 or 7). */
+  totalSteps: number;
+}
+
+export interface AdversarialCore {
+  thesisWebset: any;
+  thesisItems: Record<string, unknown>[];
+  antithesisWebset: any;
+  antithesisItems: Record<string, unknown>[];
+  cancelled: boolean;
+  steps: StepTiming[];
+}
+
+/**
+ * Shared adversarial evidence-gathering core: create a thesis and antithesis
+ * webset, poll both to idle, and collect their items. Used by both
+ * `adversarial.verify` (which layers projection/synthesis on top) and
+ * `thesis.investigate` (which layers a deterministic verdict on top).
+ *
+ * Honors cancellation between phases, cancelling any created websets. On
+ * cancellation returns `{ cancelled: true }` with whatever was collected so far.
+ */
+export async function runAdversarial(
+  taskId: string,
+  store: TaskStore,
+  exa: Exa,
+  input: AdversarialInput,
+): Promise<AdversarialCore> {
+  const tracker = createStepTracker();
+  const { thesisQuery, antithesisQuery, entity, count, enrichments, timeoutMs, totalSteps } = input;
+
+  const empty = (cancelled: boolean, partial: Partial<AdversarialCore> = {}): AdversarialCore => ({
+    thesisWebset: partial.thesisWebset,
+    thesisItems: partial.thesisItems ?? [],
+    antithesisWebset: partial.antithesisWebset,
+    antithesisItems: partial.antithesisItems ?? [],
+    cancelled,
+    steps: tracker.steps,
+  });
+
+  if (isCancelled(taskId, store)) return empty(true);
+
+  // Create thesis webset
+  const step1 = Date.now();
+  store.updateProgress(taskId, { step: 'creating thesis webset', completed: 1, total: totalSteps });
+  const thesisParams: Record<string, unknown> = { search: { query: thesisQuery, count, entity } };
+  if (enrichments) thesisParams.enrichments = enrichments;
+  const thesisWebset = await exa.websets.create(thesisParams as any);
+  tracker.track('create-thesis', step1);
+
+  if (isCancelled(taskId, store)) {
+    await exa.websets.cancel(thesisWebset.id);
+    return empty(true, { thesisWebset });
+  }
+
+  // Create antithesis webset
+  const step2 = Date.now();
+  store.updateProgress(taskId, { step: 'creating antithesis webset', completed: 2, total: totalSteps });
+  const antithesisParams: Record<string, unknown> = { search: { query: antithesisQuery, count, entity } };
+  if (enrichments) antithesisParams.enrichments = enrichments;
+  const antithesisWebset = await exa.websets.create(antithesisParams as any);
+  tracker.track('create-antithesis', step2);
+
+  if (isCancelled(taskId, store)) {
+    await exa.websets.cancel(thesisWebset.id);
+    await exa.websets.cancel(antithesisWebset.id);
+    return empty(true, { thesisWebset, antithesisWebset });
+  }
+
+  // Poll thesis
+  const step3 = Date.now();
+  store.updateProgress(taskId, { step: 'polling thesis', completed: 3, total: totalSteps });
+  await pollUntilIdle({ exa, websetId: thesisWebset.id, taskId, store, timeoutMs, stepNum: 3, totalSteps });
+  tracker.track('poll-thesis', step3);
+
+  if (isCancelled(taskId, store)) return empty(true, { thesisWebset, antithesisWebset });
+
+  // Poll antithesis
+  const step4 = Date.now();
+  store.updateProgress(taskId, { step: 'polling antithesis', completed: 4, total: totalSteps });
+  await pollUntilIdle({ exa, websetId: antithesisWebset.id, taskId, store, timeoutMs, stepNum: 4, totalSteps });
+  tracker.track('poll-antithesis', step4);
+
+  if (isCancelled(taskId, store)) return empty(true, { thesisWebset, antithesisWebset });
+
+  // Collect items from both
+  const step5 = Date.now();
+  store.updateProgress(taskId, { step: 'collecting', completed: 5, total: totalSteps });
+  const thesisItems = await collectItems(exa, thesisWebset.id, count * 2);
+  const antithesisItems = await collectItems(exa, antithesisWebset.id, count * 2);
+  tracker.track('collect', step5);
+
+  return {
+    thesisWebset,
+    thesisItems,
+    antithesisWebset,
+    antithesisItems,
+    cancelled: false,
+    steps: tracker.steps,
+  };
+}
 
 async function adversarialVerifyWorkflow(
   taskId: string,
@@ -37,79 +147,20 @@ async function adversarialVerifyWorkflow(
   const antithesisQuery = args.antithesisQuery as string;
   tracker.track('validate', step0);
 
-  if (isCancelled(taskId, store)) return null;
-
-  // Create thesis webset
-  const step1 = Date.now();
-  store.updateProgress(taskId, { step: 'creating thesis webset', completed: 1, total: synthesize ? 7 : 5 });
-
-  const thesisParams: Record<string, unknown> = {
-    search: { query: thesisQuery, count, entity },
-  };
-  if (enrichments) thesisParams.enrichments = enrichments;
-  const thesisWebset = await exa.websets.create(thesisParams as any);
-  tracker.track('create-thesis', step1);
-
-  if (isCancelled(taskId, store)) {
-    await exa.websets.cancel(thesisWebset.id);
-    return null;
-  }
-
-  // Create antithesis webset
-  const step2 = Date.now();
-  store.updateProgress(taskId, { step: 'creating antithesis webset', completed: 2, total: synthesize ? 7 : 5 });
-
-  const antithesisParams: Record<string, unknown> = {
-    search: { query: antithesisQuery, count, entity },
-  };
-  if (enrichments) antithesisParams.enrichments = enrichments;
-  const antithesisWebset = await exa.websets.create(antithesisParams as any);
-  tracker.track('create-antithesis', step2);
-
-  if (isCancelled(taskId, store)) {
-    await exa.websets.cancel(thesisWebset.id);
-    await exa.websets.cancel(antithesisWebset.id);
-    return null;
-  }
-
-  // Poll thesis
-  const step3 = Date.now();
-  store.updateProgress(taskId, { step: 'polling thesis', completed: 3, total: synthesize ? 7 : 5 });
-  await pollUntilIdle({
-    exa,
-    websetId: thesisWebset.id,
-    taskId,
-    store,
+  // Gather evidence via the shared adversarial core (create + poll + collect).
+  const core = await runAdversarial(taskId, store, exa, {
+    thesisQuery,
+    antithesisQuery,
+    entity,
+    count,
+    enrichments,
     timeoutMs,
-    stepNum: 3,
     totalSteps: synthesize ? 7 : 5,
   });
-  tracker.track('poll-thesis', step3);
+  for (const s of core.steps) tracker.steps.push(s);
+  if (core.cancelled) return null;
 
-  if (isCancelled(taskId, store)) return null;
-
-  // Poll antithesis
-  const step4 = Date.now();
-  store.updateProgress(taskId, { step: 'polling antithesis', completed: 4, total: synthesize ? 7 : 5 });
-  await pollUntilIdle({
-    exa,
-    websetId: antithesisWebset.id,
-    taskId,
-    store,
-    timeoutMs,
-    stepNum: 4,
-    totalSteps: synthesize ? 7 : 5,
-  });
-  tracker.track('poll-antithesis', step4);
-
-  if (isCancelled(taskId, store)) return null;
-
-  // Collect items from both
-  const step5 = Date.now();
-  store.updateProgress(taskId, { step: 'collecting', completed: 5, total: synthesize ? 7 : 5 });
-  const thesisItems = await collectItems(exa, thesisWebset.id, count * 2);
-  const antithesisItems = await collectItems(exa, antithesisWebset.id, count * 2);
-  tracker.track('collect', step5);
+  const { thesisWebset, thesisItems, antithesisWebset, antithesisItems } = core;
 
   store.setPartialResult(taskId, {
     thesis: { websetId: thesisWebset.id, itemCount: thesisItems.length },

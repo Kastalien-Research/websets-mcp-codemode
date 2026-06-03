@@ -18,6 +18,7 @@ import * as exaSearch from '../handlers/exa.js';
 import * as github from '../handlers/github.js';
 import * as teams from '../handlers/teams.js';
 import * as store from '../store/operations.js';
+import * as notebook from '../handlers/notebook.js';
 import { applyCompatCoercions, type AppliedCoercion, type CompatMode } from './coercion.js';
 
 // Single barrel import for all workflow side-effect registrations
@@ -124,6 +125,13 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'store.saveVerdict': { handler: store.saveVerdictOp, summary: 'Save a verdict for a company' },
   'store.getCompany': { handler: store.getCompanyOp, summary: 'Get company with lens hits, score, and verdict' },
   'store.listCandidates': { handler: store.listCandidatesOp, summary: 'List candidate companies by score/verdict' },
+  'notebook.create': { handler: notebook.create, summary: 'Create a thesis notebook (.src.md) — durable, re-runnable Code Mode artifact' },
+  'notebook.get': { handler: notebook.get, summary: 'Get a thesis notebook: decoded cells, manifest, and verdict run history' },
+  'notebook.appendCell': { handler: notebook.appendCellOp, summary: 'Append a markdown or code cell to a thesis notebook' },
+  'notebook.appendRun': { handler: notebook.appendRunOp, summary: 'Append a verdict Run section to a notebook and update the latest verdict index' },
+  'notebook.runCell': { handler: notebook.runCell, summary: 'Execute a notebook code cell through the Code Mode sandbox and append the result' },
+  'notebook.list': { handler: notebook.list, summary: 'List thesis notebooks with their latest verdict, optionally filtered by verdict' },
+  'notebook.render': { handler: notebook.render, summary: 'Render a thesis notebook as raw .src.md text for glassBook/Srcbook import' },
 };
 
 export const OPERATION_NAMES = Object.keys(OPERATIONS) as [string, ...string[]];
@@ -217,6 +225,13 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'store.saveVerdict': store.Schemas.saveVerdict,
   'store.getCompany': store.Schemas.getCompany,
   'store.listCandidates': store.Schemas.listCandidates,
+  'notebook.create': notebook.Schemas.create,
+  'notebook.get': notebook.Schemas.get,
+  'notebook.appendCell': notebook.Schemas.appendCell,
+  'notebook.appendRun': notebook.Schemas.appendRun,
+  'notebook.runCell': notebook.Schemas.runCell,
+  'notebook.list': notebook.Schemas.list,
+  'notebook.render': notebook.Schemas.render,
 };
 
 export function withCoercionMetadata(
