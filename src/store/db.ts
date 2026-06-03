@@ -124,6 +124,17 @@ function initSchema(db: Database.Database): void {
       url TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS notebooks (
+      slug TEXT PRIMARY KEY,
+      title TEXT,
+      path TEXT NOT NULL,
+      statement TEXT,
+      latest_verdict TEXT,
+      latest_confidence REAL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }
 
@@ -516,4 +527,65 @@ export function listCandidates(minScore?: number, verdict?: string): Array<{
       lensHits: hits.map(h => h.lens_id),
     };
   });
+}
+
+// --- Notebook index operations ---
+//
+// The `.src.md` file on disk is the source of truth; this table is a thin,
+// rebuildable index so notebook.list and channel/store.query consumers can read
+// the latest verdict without parsing every file.
+
+export interface NotebookRow {
+  slug: string;
+  title: string | null;
+  path: string;
+  statement: string | null;
+  latest_verdict: string | null;
+  latest_confidence: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function upsertNotebook(nb: {
+  slug: string;
+  title?: string;
+  path: string;
+  statement?: string;
+  latestVerdict?: string;
+  latestConfidence?: number;
+}): void {
+  const d = getDb();
+  d.prepare(`
+    INSERT INTO notebooks (slug, title, path, statement, latest_verdict, latest_confidence, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(slug) DO UPDATE SET
+      title = COALESCE(excluded.title, notebooks.title),
+      path = excluded.path,
+      statement = COALESCE(excluded.statement, notebooks.statement),
+      latest_verdict = COALESCE(excluded.latest_verdict, notebooks.latest_verdict),
+      latest_confidence = COALESCE(excluded.latest_confidence, notebooks.latest_confidence),
+      updated_at = datetime('now')
+  `).run(
+    nb.slug,
+    nb.title ?? null,
+    nb.path,
+    nb.statement ?? null,
+    nb.latestVerdict ?? null,
+    nb.latestConfidence ?? null,
+  );
+}
+
+export function getNotebookIndex(slug: string): NotebookRow | null {
+  const row = getDb().prepare('SELECT * FROM notebooks WHERE slug = ?').get(slug) as NotebookRow | undefined;
+  return row ?? null;
+}
+
+export function listNotebooks(verdict?: string): NotebookRow[] {
+  const d = getDb();
+  if (verdict) {
+    return d.prepare(
+      'SELECT * FROM notebooks WHERE latest_verdict = ? ORDER BY updated_at DESC',
+    ).all(verdict) as NotebookRow[];
+  }
+  return d.prepare('SELECT * FROM notebooks ORDER BY updated_at DESC').all() as NotebookRow[];
 }

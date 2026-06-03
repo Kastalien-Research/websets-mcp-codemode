@@ -13,3 +13,4 @@ import './verifiedAnswer.js';
 import './semanticCron.js';
 import './verifyEnrichments.js';
 import './verifyItem.js';
+import './thesisInvestigate.js';
