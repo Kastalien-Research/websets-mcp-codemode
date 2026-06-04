@@ -13,12 +13,21 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { decideItemReady, SYNTHETIC_ITEM_READY, type ChannelEvent } from './channelSynthesis.js';
+import { buildSemanticCronNotification, type WorkflowConfig } from './channelNotification.js';
 
 const WEBSETS_SERVER_URL = process.env.WEBSETS_SERVER_URL || 'http://localhost:7860';
 const RECONNECT_DELAY_MS = 5_000;
 const CHANNEL_CONFIG_PATH =
   process.env.WEBSETS_CHANNEL_CONFIG ||
   resolvePath(process.cwd(), 'data/channel-config.json');
+// Prototype 2: the bridge pre-resolves routes from workflow-configs.json and
+// stamps a decision-ready directive into notification meta. This file was
+// historically read only by the agent; the bridge now ALSO reads it (additive
+// — the agent can still consult it). Watched for live edits like the channel
+// config below.
+const WORKFLOW_CONFIG_PATH =
+  process.env.WEBSETS_WORKFLOW_CONFIG ||
+  resolvePath(process.cwd(), 'data/workflow-configs.json');
 
 const server = new Server(
   { name: 'websets-channel', version: '1.0.0' },
@@ -32,11 +41,23 @@ const server = new Server(
   { item and enrichment data }
 </channel>
 
+## Delivery Semantics
+
+Events are turn-gated: a notification is queued and delivered when this session
+next yields a turn — it NEVER interrupts a turn already in progress. If several
+events arrive while the session is busy, they are delivered together on the next
+turn; handle them as a group (dedupe/aggregate by webset_id where relevant). An
+event that does not appear immediately after a triggering action is NOT lost and
+is NOT a sign of a broken bridge — it is simply queued until the next turn
+boundary. Finish the current turn before concluding anything is wrong, then look
+again. Because delivery cannot preempt you, design your handling to act from a
+single notification where possible rather than relying on rapid back-and-forth.
+
 ## Dispatch Protocol
 
 When a channel event arrives, follow this protocol:
 
-1. **Read the workflow config**: Use the Read tool on data/workflow-configs.json (relative to the project root)
+1. **Read the workflow config**: Use your Read tool on \`data/workflow-configs.json\`, relative to the Claude Code project root (the cwd of your session). This file is consumed by YOU, the agent — it is not read by the channel server, and it is a different file from the server's own \`data/channel-config.json\` (a per-webset event filter you never need to read).
 2. **Look up the webset_id** in config.routes
 3. **If a matching route exists**:
    a. Check if the event_type matches any key in the route's "on" map
@@ -65,7 +86,14 @@ After each step, if the step definition has gate_output, evaluate it against the
 ## Default Behavior (no config match)
 
 ### NEW_OPPORTUNITY_CANDIDATE events
-Route by score: claim_and_research (>=10) → run /verify-item then /deep-research-item skills. queue_for_review (7-9) → summarize for user. monitor (<7) → log briefly.
+The notification meta carries score, action, item_id, and webset_id, and content
+carries the full candidate — route directly off those, no extra fetch needed.
+Route by score:
+- claim_and_research (>=10) → kick the /sweep-webset workflow scoped to this item:
+  /sweep-webset {items:[{itemId: <item_id>, websetId: <webset_id>, entity: <entity_name>}]}.
+  It runs verify → research → mark in the background (no turn-by-turn skill chain).
+- queue_for_review (7-9) → summarize the candidate (score, summary, lensHits) for the user.
+- monitor (<7) → log briefly. (Note: the channel only emits candidates with score >= 7.)
 
 ### webset.item.ready (synthesized)
 The bridge emits ONE webset.item.ready per item after the per-item event stream
@@ -81,7 +109,10 @@ NOT emitted by default — superseded by the synthesized webset.item.ready event
 above. Available only if a webset's channel-config explicitly lists them.
 
 ### webset.idle
-Report to user. Run store.listUninvestigated and store.listCandidates for pipeline status.
+The webset has finished populating. To clear the freshly-populated backlog in one
+resumable pass, kick /sweep-webset {websetId: <webset_id>} — it verifies, researches,
+and marks every uninvestigated item in the background. For a quick status check
+instead, run store.listUninvestigated and store.listCandidates and report to the user.
 
 ## Available MCP Operations
 
@@ -189,6 +220,39 @@ try {
 }
 process.on('exit', () => {
   try { unwatchFile(CHANNEL_CONFIG_PATH); } catch { /* ignore */ }
+});
+
+// --- Workflow route config (Prototype 2) ---
+// Loaded from data/workflow-configs.json. Watched for live edits. Used to
+// pre-resolve a decision-ready route directive into notification meta so the
+// consuming agent doesn't have to re-read config on every event.
+let workflowConfig: WorkflowConfig = {};
+
+function loadWorkflowConfig(): void {
+  try {
+    const raw = readFileSync(WORKFLOW_CONFIG_PATH, 'utf8');
+    workflowConfig = JSON.parse(raw) as WorkflowConfig;
+  } catch {
+    // No file or unreadable → no routes; notifications still emit with an
+    // explicit no-match directive (route:'', action:'default').
+    workflowConfig = {};
+  }
+}
+
+loadWorkflowConfig();
+try {
+  watchFile(
+    WORKFLOW_CONFIG_PATH,
+    { interval: CONFIG_POLL_INTERVAL_MS, persistent: false },
+    (curr, prev) => {
+      if (curr.mtimeMs !== prev.mtimeMs) loadWorkflowConfig();
+    },
+  );
+} catch {
+  // Filesystem doesn't support watchFile — config still loaded once at boot.
+}
+process.on('exit', () => {
+  try { unwatchFile(WORKFLOW_CONFIG_PATH); } catch { /* ignore */ }
 });
 
 function extractWebsetId(event: ChannelEvent): string | undefined {
@@ -397,29 +461,33 @@ async function emitNotification(event: ChannelEvent): Promise<void> {
   // Special-case workflow-emitted signal events. Their payload is the full
   // snapshot, not an item, so the item-shaped formatter below would be empty.
   if (event.type.startsWith('semantic-cron.')) {
-    const p = (event.payload ?? {}) as Record<string, unknown>;
-    const snapshot = (p.snapshot ?? {}) as Record<string, unknown>;
-    const signal = (snapshot.signal ?? {}) as Record<string, unknown>;
-    const join = (snapshot.join ?? {}) as Record<string, unknown>;
-    const transition = (p.transition ?? {}) as Record<string, unknown>;
+    // Prototype 1 (evidence-complete content) + Prototype 2 (decision-ready
+    // route directive in meta) are built by the pure formatter so they can be
+    // unit-tested without bridge startup side effects.
+    const { content, meta } = buildSemanticCronNotification(event, workflowConfig);
+    await server.notification({
+      method: 'notifications/claude/channel',
+      params: { content, meta },
+    });
+    return;
+  }
 
+  // Scored opportunity candidates carry payload.candidate (a CompactCandidate),
+  // NOT payload.data — so the item-shaped formatter below would drop the score
+  // and action entirely. Surface them directly so Claude can route without an
+  // extra fetch: the score/action ARE the routing decision.
+  if (event.type === 'NEW_OPPORTUNITY_CANDIDATE') {
+    const candidate = (event.payload?.candidate ?? {}) as Record<string, unknown>;
     const content = JSON.stringify({
-      configName: p.configName,
-      taskId: p.taskId,
-      reason: p.reason,
-      signal: {
-        fired: signal.fired,
-        rule: signal.rule,
-        entities: signal.entities,
-      },
-      transition: {
-        was: transition.was,
-        now: transition.now,
-        newEntities: transition.newEntities,
-        lostEntities: transition.lostEntities,
-      },
-      joinedEntities: (join.entities as Array<{ entity: string; lensCount: number; presentInLenses: string[] }> | undefined)
-        ?.map(e => ({ entity: e.entity, lensCount: e.lensCount, lenses: e.presentInLenses })) ?? [],
+      company: candidate.company ?? '',
+      companyDomain: candidate.companyDomain ?? '',
+      score: candidate.score ?? null,
+      action: candidate.action ?? '',
+      lensHits: candidate.lensHits ?? [],
+      summary: candidate.summary ?? '',
+      primaryUrl: candidate.primaryUrl ?? '',
+      itemId: candidate.itemId ?? '',
+      websetId: candidate.websetId ?? '',
     }, null, 2);
 
     await server.notification({
@@ -428,9 +496,11 @@ async function emitNotification(event: ChannelEvent): Promise<void> {
         content,
         meta: {
           event_type: event.type,
-          config_name: (p.configName ?? '') as string,
-          task_id: (p.taskId ?? '') as string,
-          reason: (p.reason ?? '') as string,
+          webset_id: (candidate.websetId ?? '') as string,
+          entity_name: (candidate.company ?? '') as string,
+          score: (candidate.score ?? '') as string | number,
+          action: (candidate.action ?? '') as string,
+          item_id: (candidate.itemId ?? '') as string,
           event_id: event.id,
         },
       },
