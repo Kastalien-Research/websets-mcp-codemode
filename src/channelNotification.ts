@@ -178,6 +178,30 @@ export function resolveRouteDirective(
   return NO_MATCH;
 }
 
+/**
+ * Build the decision-ready directive meta keys for ANY event type, given a
+ * substitution context. Used by the item/idle and candidate formatters so
+ * every notification carries the pre-resolved route directive in meta (not just
+ * semantic-cron). Returns only the directive keys; callers merge them with the
+ * event's own meta. On no route match the keys carry the explicit no-match
+ * markers (route:'', action:'default').
+ */
+export function directiveMeta(
+  event: ChannelEvent,
+  config: WorkflowConfig | undefined,
+  ctx: SubstitutionContext,
+): Record<string, string> {
+  const d = resolveRouteDirective(event, config, ctx);
+  return {
+    route: d.route,
+    steps: d.steps,
+    action: d.action,
+    command: d.command,
+    directive_message: d.message,
+    unresolved_vars: d.unresolved_vars,
+  };
+}
+
 // --- semantic-cron notification (Prototype 1 + Prototype 2) ----------------
 
 type Shape = Record<string, unknown>;
