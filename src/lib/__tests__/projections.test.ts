@@ -454,24 +454,33 @@ describe('projectEnrichment', () => {
       createdAt: '2024-01-01T00:00:00Z',
     };
     const result = projectEnrichment(enrichment);
+    // projectEnrichment intentionally preserves title/websetId/instructions/
+    // options/timestamps so callers can verify active options/instructions
+    // after create and associate the enrichment with its webset.
     expect(result).toEqual({
       id: 'e-1',
+      websetId: null,
+      title: null,
       status: 'completed',
       description: 'Annual revenue',
+      instructions: null,
       format: 'number',
+      options: [{ label: 'opt1' }],
       metadata: { tag: 'revenue' },
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: null,
     });
   });
 
-  it('strips options, timestamps, object', () => {
+  it('strips the object envelope but preserves options and timestamps', () => {
     const result = projectEnrichment({
       id: 'e-1', status: 'active', description: 'test', format: 'text',
       options: [{ label: 'a' }], createdAt: '2024-01-01', object: 'webset_enrichment',
     });
     const text = JSON.stringify(result);
-    expect(text).not.toContain('"options"');
-    expect(text).not.toContain('"createdAt"');
-    expect(text).not.toContain('"object"');
+    expect(text).not.toContain('"object"');   // envelope field not projected
+    expect(text).toContain('"options"');        // preserved (active options)
+    expect(text).toContain('"createdAt"');       // preserved (timestamps)
   });
 });
 
@@ -598,11 +607,18 @@ describe('projectWebhookAttempt', () => {
       headers: { 'content-type': 'application/json' },
     };
     const result = projectWebhookAttempt(attempt);
+    // Preserves id (correlate retries) and request/response (debug delivery).
+    // The input here uses requestBody/responseBody/headers — not the spec's
+    // request/response fields — so those project to null.
     expect(result).toEqual({
+      id: 'att-1',
       eventType: 'webset.idle',
       successful: true,
       responseStatusCode: 200,
       attemptedAt: '2024-01-31T00:00:00Z',
+      createdAt: null,
+      request: null,
+      response: null,
     });
   });
 
@@ -668,19 +684,22 @@ describe('projectEvent', () => {
       data: { websetId: 'ws-1', status: 'idle' },
     };
     const result = projectEvent(event);
+    // projectEvent preserves the spec's Event.data payload — stripping it
+    // broke channel-bridge routing (channel.ts reads payload.data.websetId).
     expect(result).toEqual({
       id: 'evt-1',
       type: 'webset.idle',
       createdAt: '2024-01-31T00:00:00Z',
+      data: { websetId: 'ws-1', status: 'idle' },
     });
   });
 
-  it('strips data payload', () => {
+  it('preserves the data payload (load-bearing for channel-bridge routing)', () => {
     const result = projectEvent({
       id: 'evt-1', type: 'item.created', createdAt: '2024-01-31',
       data: { itemId: 'item-1', websetId: 'ws-1' },
     });
-    expect(result).not.toHaveProperty('data');
+    expect(result.data).toEqual({ itemId: 'item-1', websetId: 'ws-1' });
   });
 });
 

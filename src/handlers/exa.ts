@@ -192,6 +192,17 @@ export const findSimilar: OperationHandler = async (args, exa) => {
 };
 
 export const getContents: OperationHandler = async (args, exa) => {
+  // The schema requires urls|ids (refine), but the handler is also called
+  // directly (workflows, tests) where schema validation doesn't run — guard
+  // here too so a missing target returns a clean error instead of a raw SDK
+  // failure. Mirrors the requireParams guard on the other exa handlers.
+  if (args.urls === undefined && args.ids === undefined) {
+    return errorResult(
+      'exa.getContents',
+      new Error("Either 'urls' or 'ids' is required"),
+      'Provide urls (a URL string or array of URLs) or ids (array of Exa result IDs).',
+    );
+  }
   try {
     const opts: Record<string, unknown> = {};
     if (args.text !== undefined) opts.text = args.text;

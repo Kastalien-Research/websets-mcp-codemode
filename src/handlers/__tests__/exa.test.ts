@@ -30,9 +30,13 @@ describe('exa.search', () => {
   });
 
   it('passes all options through', async () => {
+    // Options reflect the current exa.search schema (curated against the Exa
+    // API spec). includeText/excludeText/useAutoprompt are NOT search params
+    // (includeText/excludeText live on findSimilar), and `type` uses the
+    // current enum (instant/fast/auto/deep-*), not the retired 'neural'.
     await exaHandlers.search({
       query: 'AI startups',
-      type: 'neural',
+      type: 'auto',
       numResults: 5,
       category: 'company',
       includeDomains: ['example.com'],
@@ -40,26 +44,20 @@ describe('exa.search', () => {
       startPublishedDate: '2024-01-01T00:00:00.000Z',
       endPublishedDate: '2024-12-31T00:00:00.000Z',
       contents: { text: true, summary: true },
-      includeText: ['funding'],
-      excludeText: ['acquired'],
       userLocation: 'US',
       moderation: true,
-      useAutoprompt: false,
     }, exa);
     const call = (exa.search as any).mock.calls[0];
     expect(call[0]).toBe('AI startups');
     expect(call[1]).toMatchObject({
-      type: 'neural',
+      type: 'auto',
       numResults: 5,
       category: 'company',
       includeDomains: ['example.com'],
       excludeDomains: ['spam.com'],
       contents: { text: true, summary: true },
-      includeText: ['funding'],
-      excludeText: ['acquired'],
       userLocation: 'US',
       moderation: true,
-      useAutoprompt: false,
     });
   });
 
@@ -196,18 +194,17 @@ describe('exa.answer', () => {
   });
 
   it('passes all options through', async () => {
+    // Options reflect the current exa.answer schema (curated against the Exa
+    // API spec): text, outputSchema, userLocation (+ stream). model/systemPrompt
+    // are not part of the current answer contract.
     await exaHandlers.answer({
       query: 'Explain AI',
       text: true,
-      model: 'exa',
-      systemPrompt: 'Be concise',
       outputSchema: { type: 'object', properties: { summary: { type: 'string' } } },
       userLocation: 'US',
     }, exa);
     const opts = (exa.answer as any).mock.calls[0][1];
     expect(opts.text).toBe(true);
-    expect(opts.model).toBe('exa');
-    expect(opts.systemPrompt).toBe('Be concise');
     expect(opts.outputSchema).toEqual({ type: 'object', properties: { summary: { type: 'string' } } });
     expect(opts.userLocation).toBe('US');
   });
