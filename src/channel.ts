@@ -13,7 +13,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { decideItemReady, SYNTHETIC_ITEM_READY, type ChannelEvent } from './channelSynthesis.js';
-import { buildSemanticCronNotification, type WorkflowConfig } from './channelNotification.js';
+import { buildSemanticCronNotification, directiveMeta, type WorkflowConfig } from './channelNotification.js';
 
 const WEBSETS_SERVER_URL = process.env.WEBSETS_SERVER_URL || 'http://localhost:7860';
 const RECONNECT_DELAY_MS = 5_000;
@@ -490,11 +490,22 @@ async function emitNotification(event: ChannelEvent): Promise<void> {
       websetId: candidate.websetId ?? '',
     }, null, 2);
 
+    // Decision-ready route directive (additive). The candidate's score-derived
+    // action/score/item_id/webset_id win on collision — they ARE the routing
+    // decision — so the directive is spread first and the score fields override.
+    const candidateCtx = {
+      event_type: event.type,
+      webset_id: (candidate.websetId ?? '') as string,
+      entity_name: (candidate.company ?? '') as string,
+      item_id: (candidate.itemId ?? '') as string,
+      score: String(candidate.score ?? ''),
+    };
     await server.notification({
       method: 'notifications/claude/channel',
       params: {
         content,
         meta: {
+          ...directiveMeta(event, workflowConfig, candidateCtx),
           event_type: event.type,
           webset_id: (candidate.websetId ?? '') as string,
           entity_name: (candidate.company ?? '') as string,
@@ -541,6 +552,16 @@ async function emitNotification(event: ChannelEvent): Promise<void> {
 
   const websetId = (data.websetId ?? data.id ?? '') as string;
 
+  // Decision-ready route directive for item/idle events (e.g. webset.idle on a
+  // routed webset → runnable command). For item events webset_id is the item's
+  // websetId; for webset-level events (idle) it's the webset's own id (data.id).
+  const genericCtx = {
+    event_type: event.type,
+    webset_id: websetId,
+    entity_name: entityName,
+    item_id: (data.id ?? '') as string,
+  };
+
   await server.notification({
     method: 'notifications/claude/channel',
     params: {
@@ -550,6 +571,7 @@ async function emitNotification(event: ChannelEvent): Promise<void> {
         webset_id: websetId,
         entity_name: entityName,
         event_id: event.id,
+        ...directiveMeta(event, workflowConfig, genericCtx),
       },
     },
   });

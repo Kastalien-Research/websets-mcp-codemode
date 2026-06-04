@@ -8,6 +8,7 @@ import { registerExecuteTool } from "./tools/executeTool.js";
 import { registerStatusTool } from "./tools/statusTool.js";
 import { registerWorkflowMcp } from "./workflows/mcp.js";
 import { createWebhookRouter } from "./webhooks/receiver.js";
+import { setEnrichmentLabelResolver } from "./webhooks/eventBus.js";
 import type { Express, Request, Response } from "express";
 
 export interface ServerConfig {
@@ -58,6 +59,22 @@ export function createServer(config: ServerConfig): ServerInstance {
   app.use(createWebhookRouter(config.webhookSecret));
 
   const exa = new Exa(config.exaApiKey || 'dummy-key-for-testing');
+
+  // AgX v2: resolve enrichmentId→description from the webset definition so the
+  // event bus can label item-event enrichments (item webhooks carry only the
+  // opaque enrichmentId). Lazy + cached per webset inside the bus.
+  setEnrichmentLabelResolver(async (websetId: string) => {
+    const ws = (await exa.websets.get(websetId)) as unknown as {
+      enrichments?: Array<{ id?: string; description?: string; title?: string }>;
+    };
+    const map = new Map<string, string>();
+    for (const e of ws.enrichments ?? []) {
+      const label = e.description ?? e.title;
+      if (e.id && label) map.set(e.id, label);
+    }
+    return map;
+  });
+
   const sessions = new Map<string, SessionEntry>();
   const pendingSessions = new Set<string>();
   const sessionTimeoutMs = config.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS;

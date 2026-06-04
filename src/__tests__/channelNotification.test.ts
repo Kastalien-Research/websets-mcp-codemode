@@ -3,6 +3,7 @@ import {
   buildSemanticCronContent,
   buildSemanticCronNotification,
   resolveRouteDirective,
+  directiveMeta,
   substitute,
   semanticCronContext,
   type WorkflowConfig,
@@ -220,6 +221,51 @@ describe('Prototype 2 — decision-ready route directive in meta', () => {
     }
     expect(meta.event_type).toBe('semantic-cron.signal-fired');
     expect(meta.config_name).toBe('model-drift-monitor');
+  });
+});
+
+// --- Feature 1: universal directive (item / idle / candidate) -------------
+describe('directiveMeta — route directive for all event types', () => {
+  it('F1-2: resolves a webset-keyed webset.idle route to steps + a runnable command', () => {
+    const idle: ChannelEvent = {
+      id: 'e_idle', type: 'webset.idle',
+      payload: { data: { id: 'webset_01kn2jaampjxn9wgfbrbpf53ds' } },
+    };
+    const m = directiveMeta(idle, CONFIG, {
+      event_type: 'webset.idle',
+      webset_id: 'webset_01kn2jaampjxn9wgfbrbpf53ds',
+      entity_name: '',
+    });
+    expect(m.route).toBe('webset_01kn2jaampjxn9wgfbrbpf53ds');
+    expect(m.steps).toBe('verify-enrichments,notify-user');
+    expect(m.action).toBe('dispatch'); // verify-enrichments is a server-workflow
+    expect(m.command).toContain("type: 'verify.enrichments'");
+    expect(m.command).toContain("webset_01kn2jaampjxn9wgfbrbpf53ds");
+  });
+
+  it('F1-5/P2-5: no matching route yields explicit no-match markers', () => {
+    const ev: ChannelEvent = {
+      id: 'e', type: 'webset.item.ready',
+      payload: { data: { id: 'witem_x', websetId: 'webset_unrouted' } },
+    };
+    const m = directiveMeta(ev, CONFIG, {
+      event_type: 'webset.item.ready', webset_id: 'webset_unrouted', entity_name: 'X',
+    });
+    expect(m.route).toBe('');
+    expect(m.action).toBe('default');
+    expect(m.steps).toBe('');
+  });
+
+  it('F1-6: directive keys are identifier-safe and leak no literal {{tokens}}', () => {
+    const idle: ChannelEvent = {
+      id: 'e_idle', type: 'webset.idle',
+      payload: { data: { id: 'webset_01kn2jaampjxn9wgfbrbpf53ds' } },
+    };
+    const m = directiveMeta(idle, CONFIG, {
+      event_type: 'webset.idle', webset_id: 'webset_01kn2jaampjxn9wgfbrbpf53ds', entity_name: '',
+    });
+    for (const k of Object.keys(m)) expect(k).toMatch(/^[a-z0-9_]+$/);
+    expect(m.directive_message).not.toMatch(/\{\{/);
   });
 });
 
