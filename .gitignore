@@ -27,3 +27,5 @@ ai_docs/
 use-case-ideas/
 
 keyfile.json
+
+.env.local
