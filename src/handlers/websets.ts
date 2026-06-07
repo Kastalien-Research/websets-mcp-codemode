@@ -35,7 +35,10 @@ export const Schemas = {
     exclude: z.array(z.unknown()).optional(),
   }),
   get: z.object({
-    id: z.string(),
+    id: z.string().optional(),
+    // Alias: item-level ops use `websetId`, so agents reach for it here too.
+    // Accepted and normalized to `id` in the handler.
+    websetId: z.string().optional(),
     expand: z.array(z.string()).optional(),
   }),
   list: z.object({
@@ -45,7 +48,9 @@ export const Schemas = {
     search: z.string().min(2).max(50).optional(),
   }),
   update: z.object({
-    id: z.string(),
+    id: z.string().optional(),
+    // Alias for `id` — see Schemas.get.
+    websetId: z.string().optional(),
     title: z.string().optional(),
     metadata: z.record(z.string()).optional(),
   }),
@@ -110,6 +115,7 @@ export const create: OperationHandler = async (args, exa) => {
 };
 
 export const get: OperationHandler = async (args, exa) => {
+  if (args.id == null && args.websetId != null) args.id = args.websetId;
   const guard = requireParams('websets.get', args, 'id');
   if (guard) return guard;
   try {
@@ -142,6 +148,7 @@ export const list: OperationHandler = async (args, exa) => {
 };
 
 export const update: OperationHandler = async (args, exa) => {
+  if (args.id == null && args.websetId != null) args.id = args.websetId;
   const guard = requireParams('websets.update', args, 'id');
   if (guard) return guard;
   try {

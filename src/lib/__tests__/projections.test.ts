@@ -125,22 +125,26 @@ describe('projectItem', () => {
         { criterion: 'Has over 100 employees', satisfied: 'no' },
       ],
       enrichments: [
-        { description: 'Annual revenue', format: 'number', result: ['50000000'] },
+        // enrichmentId is surfaced so callers can map each value back to its
+        // criterion via the webset's enrichment list. Real items often carry only
+        // enrichmentId (no inline description), so position-based mapping is unsafe.
+        { enrichmentId: 'enr-1', description: 'Annual revenue', format: 'number', result: ['50000000'] },
       ],
     });
   });
 
-  it('strips content, reasoning, references, enrichmentId, status, object', () => {
+  it('strips content, reasoning, references, status, object — but keeps enrichmentId for mapping', () => {
     const result = projectItem(makeItem());
     const text = JSON.stringify(result);
     expect(text).not.toContain('Very long content');
     expect(text).not.toContain('reasoning');
     expect(text).not.toContain('references');
-    expect(text).not.toContain('enrichmentId');
     expect(text).not.toContain('websetId');
     expect(text).not.toContain('sourceId');
     expect(text).not.toContain('createdAt');
     expect(text).not.toContain('"object"');
+    // enrichmentId is intentionally retained (load-bearing for value→criterion mapping).
+    expect(text).toContain('enrichmentId');
   });
 
   it('extracts person name', () => {
