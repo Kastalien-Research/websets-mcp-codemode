@@ -12,11 +12,19 @@ export const meta = {
   ],
 }
 
+// --- Args normalization -----------------------------------------------------
+// A named workflow's `args` can arrive as a JSON *string* rather than a parsed
+// object — in which case A.items / A.websetId would silently be undefined and the
+// run would no-op or sweep the wrong scope. Parse defensively before reading.
+let A = args
+if (typeof A === 'string') { try { A = JSON.parse(A) } catch { A = {} } }
+A = A ?? {}
+
 // --- Tunables (override via args) -------------------------------------------
 // confidenceThreshold: items at/above this verdict confidence get deep research;
 // below it they're annotated as low-confidence and skipped (cost control).
-const THRESHOLD = args?.confidenceThreshold ?? 0.7
-const LIMIT = args?.limit ?? 50
+const THRESHOLD = A.confidenceThreshold ?? 0.7
+const LIMIT = A.limit ?? 50
 
 // The websets Code-Mode execute tool the agents drive. Agents call it with
 // callOperation('<op>', {...}). Kept in one place so it's easy to retarget.
@@ -77,14 +85,22 @@ const MARK_SCHEMA = {
 // --- Phase 1: Discover the work list ----------------------------------------
 phase('Discover')
 
-let workItems = args?.items
+let workItems = A.items
 if (!Array.isArray(workItems) || workItems.length === 0) {
-  const scopeNote = args?.websetId
-    ? `Scope to websetId "${args.websetId}".`
+  const scopeNote = A.websetId
+    ? `Scope to websetId "${A.websetId}".`
     : 'No webset scope was given — list across all websets.'
+  // When scoped to a webset, first mirror its items into the shadow store via the
+  // ingest flag — items created through the API never reach the store on their own
+  // (only the webhook path upserts), so store.listUninvestigated would be empty.
   const discovery = await agent(
-    `Discover uninvestigated Webset items to sweep. Using ${EXECUTE_TOOL}, run:\n\n` +
-      `  callOperation('store.listUninvestigated', { ${args?.websetId ? `websetId: '${args.websetId}', ` : ''}limit: ${LIMIT} })\n\n` +
+    `Discover uninvestigated Webset items to sweep. Using ${EXECUTE_TOOL}:\n\n` +
+      (A.websetId
+        ? `1. Mirror the webset's items into the local store:\n` +
+          `   callOperation('items.getAll', { websetId: '${A.websetId}', ingest: true, maxItems: ${LIMIT} })\n` +
+          `2. List what is still uninvestigated:\n` +
+          `   callOperation('store.listUninvestigated', { websetId: '${A.websetId}', limit: ${LIMIT} })\n\n`
+        : `  callOperation('store.listUninvestigated', { limit: ${LIMIT} })\n\n`) +
       `${scopeNote} Return each item's itemId, its websetId, the entity name, and the domain/URL if present. ` +
       `Return ONLY items not yet investigated — do not fabricate any.`,
     { label: 'discover', phase: 'Discover', schema: DISCOVER_SCHEMA },
@@ -107,44 +123,66 @@ if (workItems.length === 0) {
 const swept = await pipeline(
   workItems,
 
-  // Stage 1 — Verify (mirrors the /verify-item skill procedure)
+  // Stage 1a — Verify (research): free-form corroboration, NO schema. This is the
+  // heavy multi-search step and it ends in prose. Separating the structured verdict
+  // into its own tiny stage (1b) fixes the dominant failure mode where a research-
+  // busy agent finishes WITHOUT ever calling StructuredOutput (43/44 items burned
+  // ~2M tokens for 1 verdict on 2026-06-07). A schema-free agent can't fail that way.
   (item) =>
     agent(
       `You are an independent verification judge. Verify the enrichments for Webset item "${item.itemId}"` +
         `${item.websetId ? ` in webset "${item.websetId}"` : ''} (entity: "${item.entity}").\n\n` +
-        `Procedure (the /verify-item skill):\n` +
-        `1. Using ${EXECUTE_TOOL}, fetch the item: callOperation('items.get', { id: '${item.itemId}'${item.websetId ? `, websetId: '${item.websetId}'` : ''} }).\n` +
-        `2. For EACH enrichment claim (email, phone, description, URL), run an INDEPENDENT Exa search via callOperation('exa.search', ...) / callOperation('exa.getContents', ...). Do not trust the enriched value — corroborate it from a separate public source.\n` +
-        `3. Classify each enrichment: confirmed | plausible | disputed | unverifiable.\n` +
-        `4. Produce an overallVerdict and a confidence in [0,1]. Be skeptical: when independent corroboration is missing, confidence should be low, not generous.`,
-      { label: `verify:${item.entity}`, phase: 'Verify', schema: VERDICT_SCHEMA },
+        `Procedure (the /verify-item skill), all via ${EXECUTE_TOOL}:\n` +
+        `1. Fetch the item: callOperation('items.get', { websetId: '${item.websetId}', itemId: '${item.itemId}' }).\n` +
+        `2. For EACH enrichment claim (AUM, employees, founded, firm type, strategy, founder, URL), run an INDEPENDENT Exa search via callOperation('exa.search', ...) / callOperation('exa.getContents', ...). Corroborate from a SEPARATE public source — and flag CIRCULAR values that merely echo the item's own description.\n` +
+        `3. Classify each enrichment: confirmed | plausible | disputed | unverifiable, with the evidence.\n` +
+        `Write your findings up as prose — no JSON needed in this step. Be skeptical: missing independent corroboration means LOW confidence, not generous.`,
+      { label: `verify:${item.entity}`, phase: 'Verify' },
     ),
 
+  // Stage 1b — Verify (emit): convert the writeup into the structured verdict. A
+  // single-purpose, no-tools prompt → agents reliably call StructuredOutput here.
+  (writeup, item) => {
+    if (!writeup) return null // stage 1a errored → drop this item
+    return agent(
+      `Convert the verification writeup below into a structured verdict for entity "${item.entity}" (itemId "${item.itemId}"). ` +
+        `Do NOT do further research — only summarize what's already present. Set itemId="${item.itemId}" and entity="${item.entity}". ` +
+        `overallVerdict ∈ {confirmed, plausible, disputed}; confidence ∈ [0,1], kept low when independent corroboration is missing.\n\n` +
+        `--- WRITEUP ---\n${writeup}`,
+      { label: `verdict:${item.entity}`, phase: 'Verify', schema: VERDICT_SCHEMA },
+    )
+  },
+
   // Stage 2 — Research the survivors; low-confidence items pass straight through.
-  // No judgment write here: marking is its own deterministic stage (3) below, so a
-  // research-busy agent that forgets a bookkeeping call can't strand the item in
-  // the backlog. The live run on 2026-06-03 caught exactly that failure mode.
+  // Same research→emit split as Verify. No judgment write here: marking is its own
+  // deterministic stage (3) below, so a research-busy agent that forgets a
+  // bookkeeping call can't strand the item in the backlog.
   (verdict, item) => {
-    if (!verdict) return null // stage 1 errored → drop this item
+    if (!verdict) return null
     const passed = verdict.confidence >= THRESHOLD && verdict.overallVerdict !== 'disputed'
     if (!passed) {
       // Below the bar: no research, but still flow into the Mark stage so it's cleared.
       return { itemId: item.itemId, entity: item.entity, verdict, researched: false,
         hook: '', summary: `skipped: ${verdict.overallVerdict} @ ${verdict.confidence}` }
     }
-    return agent(
-      `Entity "${item.entity}" passed verification (${verdict.overallVerdict} @ ${verdict.confidence}). ` +
-        `Run deep research and persist the findings.\n\n` +
-        `Procedure (the /deep-research-item skill), all via ${EXECUTE_TOOL}:\n` +
-        `1. Parallel Exa searches on funding, tech stack, hiring, recent news, and findSimilar for "${item.entity}"${item.domain ? ` (domain ${item.domain})` : ''}.\n` +
-        `2. exa.getContents on the top 3-5 URLs; extract decision-makers, tech choices, recent milestones.\n` +
-        `3. Buyer mapping (primary contact, role fit) and an angle (hook / value-prop / risk).\n` +
-        `4. Persist findings: callOperation('store.annotate', { itemId: '${item.itemId}', type: 'research', value: <JSON-stringified findings>, source: 'sweep-webset' }).\n` +
-        `Return the one-line hook and a short summary of the findings.`,
-      { label: `research:${item.entity}`, phase: 'Research', schema: RESEARCH_SCHEMA },
-    ).then((r) =>
-      r ? { ...r, itemId: item.itemId, entity: item.entity, verdict, researched: true } : null,
-    )
+    return (async () => {
+      const findings = await agent(
+        `Entity "${item.entity}" passed verification (${verdict.overallVerdict} @ ${verdict.confidence}). Run deep research and persist it.\n\n` +
+          `Procedure (the /deep-research-item skill), all via ${EXECUTE_TOOL}:\n` +
+          `1. Parallel Exa searches on funding, tech stack, hiring, recent news, and findSimilar for "${item.entity}"${item.domain ? ` (domain ${item.domain})` : ''}.\n` +
+          `2. exa.getContents on the top 3-5 URLs; extract decision-makers, tech choices, recent milestones.\n` +
+          `3. Buyer mapping (primary contact, role fit) and an angle (hook / value-prop / risk).\n` +
+          `4. Persist: callOperation('store.annotate', { itemId: '${item.itemId}', type: 'research', value: <JSON-stringified findings>, source: 'sweep-webset' }).\n` +
+          `Write your findings as prose; no JSON needed in this step.`,
+        { label: `research:${item.entity}`, phase: 'Research' },
+      )
+      if (!findings) return null
+      const emitted = await agent(
+        `From the research findings below for "${item.entity}", output the one-line hook and a short summary. Do not research further.\n\n--- FINDINGS ---\n${findings}`,
+        { label: `digest:${item.entity}`, phase: 'Research', schema: RESEARCH_SCHEMA },
+      )
+      return emitted ? { ...emitted, itemId: item.itemId, entity: item.entity, verdict, researched: true } : null
+    })()
   },
 
   // Stage 3 — Mark investigated (deterministic, single call). This is the ONLY place

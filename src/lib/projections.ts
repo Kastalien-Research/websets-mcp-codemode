@@ -48,8 +48,13 @@ export function projectItem(item: Record<string, unknown>): Record<string, unkno
   })) ?? null;
 
   const enrichments = item.enrichments as Array<Record<string, unknown>> | undefined;
+  // Raw item enrichments carry `enrichmentId` (e.g. "wenrich_…") but usually no
+  // inline `description`. Surface the id so callers can map each value back to
+  // its criterion via the webset's enrichment list (projectWebset exposes id +
+  // description) instead of relying on array position.
   const projectedEnrichments = enrichments?.map(e => ({
-    description: e.description,
+    enrichmentId: e.enrichmentId ?? null,
+    description: e.description ?? null,
     format: e.format,
     result: e.result,
   })) ?? null;
