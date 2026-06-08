@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getDb, closeDb, upsertItem, annotateItem, getItemWithAnnotations, getUninvestigatedItems, insertEvent, insertSnapshot, getLatestSnapshot } from '../db.js';
+import { getDb, closeDb, upsertItem, annotateItem, getItemWithAnnotations, getUninvestigatedItems, getUninvestigatedLean, countUninvestigatedItems, insertEvent, insertSnapshot, getLatestSnapshot } from '../db.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -96,6 +96,60 @@ describe('getUninvestigatedItems', () => {
     annotateItem('item_1', 'judgment', 'done');
 
     expect(getUninvestigatedItems()).toHaveLength(0);
+  });
+
+  it('applies the limit in SQL', () => {
+    upsertItem({ id: 'item_1', websetId: 'ws_1' });
+    upsertItem({ id: 'item_2', websetId: 'ws_1' });
+    upsertItem({ id: 'item_3', websetId: 'ws_1' });
+
+    expect(getUninvestigatedItems(undefined, 2)).toHaveLength(2);
+  });
+});
+
+describe('countUninvestigatedItems', () => {
+  it('counts uninvestigated items independent of any limit', () => {
+    upsertItem({ id: 'item_1', websetId: 'ws_1' });
+    upsertItem({ id: 'item_2', websetId: 'ws_1' });
+    upsertItem({ id: 'item_3', websetId: 'ws_2' });
+    annotateItem('item_1', 'judgment', 'done');
+
+    expect(countUninvestigatedItems()).toBe(2);
+    expect(countUninvestigatedItems('ws_1')).toBe(1);
+    expect(countUninvestigatedItems('ws_2')).toBe(1);
+  });
+});
+
+describe('getUninvestigatedLean', () => {
+  it('omits the heavy raw and evaluations columns but keeps enrichments', () => {
+    upsertItem({
+      id: 'item_1',
+      websetId: 'ws_1',
+      name: 'Acme',
+      url: 'https://acme.example',
+      entityType: 'company',
+      enrichments: { wenrich_1: 'New York, NY' },
+      evaluations: [{ big: 'blob' }],
+      raw: { huge: 'payload'.repeat(100) },
+    });
+
+    const rows = getUninvestigatedLean();
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.id).toBe('item_1');
+    expect(row.name).toBe('Acme');
+    expect(row.enrichments).toBe(JSON.stringify({ wenrich_1: 'New York, NY' }));
+    expect(row).not.toHaveProperty('raw');
+    expect(row).not.toHaveProperty('evaluations');
+  });
+
+  it('respects websetId and limit', () => {
+    upsertItem({ id: 'item_1', websetId: 'ws_1' });
+    upsertItem({ id: 'item_2', websetId: 'ws_1' });
+    upsertItem({ id: 'item_3', websetId: 'ws_2' });
+
+    expect(getUninvestigatedLean('ws_1')).toHaveLength(2);
+    expect(getUninvestigatedLean('ws_1', 1)).toHaveLength(1);
   });
 });
 
