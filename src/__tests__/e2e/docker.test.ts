@@ -50,8 +50,7 @@ describe.skipIf(!HAS_DOCKER || SKIP_DOCKER || !HAS_API_KEY)('Docker E2E', () => 
   it('health endpoint responds', async () => {
     const res = await fetch(`${BASE_URL}/health`);
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toEqual({ status: 'ok' });
+    expect(await res.text()).toBe('OK');
   });
 
   it('MCP client can connect and list tools', async () => {

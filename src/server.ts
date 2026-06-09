@@ -3,6 +3,7 @@ import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Exa } from "exa-js";
+import { resolveExaApiKey } from "./auth.js";
 import { registerSearchTool } from "./tools/searchTool.js";
 import { registerExecuteTool } from "./tools/executeTool.js";
 import { registerStatusTool } from "./tools/statusTool.js";
@@ -19,6 +20,8 @@ export interface ServerConfig {
   defaultCompatMode?: 'safe' | 'strict';
   /** Secret for verifying Exa webhook signatures (Exa-Signature header) */
   webhookSecret?: string;
+  /** MCP server name — should match Dedalus marketplace slug */
+  mcpServerName?: string;
 }
 
 export interface ServerInstance {
@@ -30,41 +33,52 @@ export interface ServerInstance {
 interface SessionEntry {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
+  exa: Exa;
   lastActivity: number;
   timeoutId?: ReturnType<typeof setTimeout>;
 }
 
 const DEFAULT_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const MCP_PATHS = ["/", "/mcp"] as const;
+
+function createExaClient(apiKey: string): Exa {
+  return new Exa(apiKey || 'dummy-key-for-testing');
+}
 
 export function createServer(config: ServerConfig): ServerInstance {
-  // Manual Express setup (replaces createMcpExpressApp) to capture raw body
-  // for webhook signature verification. The SDK's createMcpExpressApp only adds
-  // express.json() and optional host validation — for host '0.0.0.0' it just
-  // logs a warning, so no middleware to replicate.
   const app = express();
   app.use(express.json({
     verify: (req, _res, buf) => {
-      // Store raw body for Exa webhook signature verification
       (req as any).__rawBody = buf;
     },
   }));
 
-  // Health endpoint for Docker healthchecks and k8s probes
-  app.get('/health', (_req: Request, res: Response) => {
-    res.setHeader('Content-Type', 'application/json');
-    res.json({ status: 'ok' });
+  // Stainless/Dedalus: echo mcp-session-id on responses when absent
+  app.use((req: Request, res: Response, next) => {
+    const existing = req.headers['mcp-session-id'];
+    const sessionId = (Array.isArray(existing) ? existing[0] : existing) || crypto.randomUUID();
+    (req as any).mcpSessionId = sessionId;
+    const origWriteHead = res.writeHead.bind(res);
+    res.writeHead = function (statusCode: number, ...rest: any[]) {
+      if (!res.getHeader('mcp-session-id')) {
+        res.setHeader('mcp-session-id', sessionId);
+      }
+      return origWriteHead(statusCode, ...rest);
+    } as typeof res.writeHead;
+    next();
   });
 
-  // Webhook receiver for Exa webhook events + SSE stream for channel bridges
+  // Dedalus/Stainless health probe convention
+  app.get('/health', (_req: Request, res: Response) => {
+    res.status(200).send('OK');
+  });
+
   app.use(createWebhookRouter(config.webhookSecret));
 
-  const exa = new Exa(config.exaApiKey || 'dummy-key-for-testing');
+  const webhookExa = createExaClient(config.exaApiKey);
 
-  // AgX v2: resolve enrichmentId→description from the webset definition so the
-  // event bus can label item-event enrichments (item webhooks carry only the
-  // opaque enrichmentId). Lazy + cached per webset inside the bus.
   setEnrichmentLabelResolver(async (websetId: string) => {
-    const ws = (await exa.websets.get(websetId)) as unknown as {
+    const ws = (await webhookExa.websets.get(websetId)) as unknown as {
       enrichments?: Array<{ id?: string; description?: string; title?: string }>;
     };
     const map = new Map<string, string>();
@@ -78,18 +92,16 @@ export function createServer(config: ServerConfig): ServerInstance {
   const sessions = new Map<string, SessionEntry>();
   const pendingSessions = new Set<string>();
   const sessionTimeoutMs = config.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS;
+  const mcpServerName = config.mcpServerName ?? 'websets';
 
-  // Helper to schedule session cleanup
   const scheduleSessionCleanup = (sessionId: string) => {
     const entry = sessions.get(sessionId);
     if (!entry) return;
 
-    // Clear existing timeout
     if (entry.timeoutId) {
       clearTimeout(entry.timeoutId);
     }
 
-    // Schedule new timeout
     entry.timeoutId = setTimeout(() => {
       const session = sessions.get(sessionId);
       if (session) {
@@ -99,7 +111,6 @@ export function createServer(config: ServerConfig): ServerInstance {
     }, sessionTimeoutMs);
   };
 
-  // Helper to update session activity
   const updateSessionActivity = (sessionId: string) => {
     const entry = sessions.get(sessionId);
     if (entry) {
@@ -108,17 +119,27 @@ export function createServer(config: ServerConfig): ServerInstance {
     }
   };
 
-  app.all("/mcp", async (req: Request, res: Response) => {
-    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+  const registerMcpTools = (server: McpServer, exa: Exa) => {
+    registerSearchTool(server);
+    registerExecuteTool(server, exa, {
+      defaultCompatMode: config.defaultCompatMode ?? 'safe',
+    });
+    registerStatusTool(server, exa, {
+      defaultCompatMode: config.defaultCompatMode ?? 'safe',
+    });
+    registerWorkflowMcp(server);
+  };
+
+  const handleMcpRequest = async (req: Request, res: Response) => {
+    const sessionId = (req.headers["mcp-session-id"] as string | undefined)
+      ?? (req as any).mcpSessionId;
 
     try {
-      // Existing session — route to its transport
       if (sessionId && sessions.has(sessionId)) {
         const entry = sessions.get(sessionId)!;
         updateSessionActivity(sessionId);
         await entry.transport.handleRequest(req, res, req.body);
 
-        // Handle DELETE cleanup
         if (req.method === "DELETE") {
           if (entry.timeoutId) {
             clearTimeout(entry.timeoutId);
@@ -129,12 +150,9 @@ export function createServer(config: ServerConfig): ServerInstance {
         return;
       }
 
-      // New session — create server + transport pair
       const newSessionId = sessionId || crypto.randomUUID();
 
-      // Prevent race condition: check if session creation is already in progress
       if (pendingSessions.has(newSessionId)) {
-        // Wait briefly and retry
         await new Promise(resolve => setTimeout(resolve, 50));
         if (sessions.has(newSessionId)) {
           const entry = sessions.get(newSessionId)!;
@@ -144,13 +162,15 @@ export function createServer(config: ServerConfig): ServerInstance {
         }
       }
 
-      // Mark session as pending
       pendingSessions.add(newSessionId);
 
       try {
+        const exaApiKey = resolveExaApiKey(req, config.exaApiKey);
+        const exa = createExaClient(exaApiKey);
+
         const server = new McpServer({
-          name: "websets-server",
-          version: "2.0.0"
+          name: mcpServerName,
+          version: "2.0.0",
         });
 
         const transport = new StreamableHTTPServerTransport({
@@ -158,14 +178,7 @@ export function createServer(config: ServerConfig): ServerInstance {
           enableJsonResponse: true,
         });
 
-        registerSearchTool(server);
-        registerExecuteTool(server, exa, {
-          defaultCompatMode: config.defaultCompatMode ?? 'safe',
-        });
-        registerStatusTool(server, exa, {
-          defaultCompatMode: config.defaultCompatMode ?? 'safe',
-        });
-        registerWorkflowMcp(server);
+        registerMcpTools(server, exa);
 
         transport.onclose = () => {
           const entry = sessions.get(transport.sessionId || newSessionId);
@@ -176,22 +189,20 @@ export function createServer(config: ServerConfig): ServerInstance {
         };
 
         await server.connect(transport);
-        
+
         const entry: SessionEntry = {
           transport,
           server,
+          exa,
           lastActivity: Date.now(),
         };
-        
+
         sessions.set(newSessionId, entry);
         scheduleSessionCleanup(newSessionId);
-
-        // Remove from pending
         pendingSessions.delete(newSessionId);
 
         await transport.handleRequest(req, res, req.body);
       } catch (error) {
-        // Clean up on error
         pendingSessions.delete(newSessionId);
         throw error;
       }
@@ -205,7 +216,11 @@ export function createServer(config: ServerConfig): ServerInstance {
         });
       }
     }
-  });
+  };
+
+  for (const path of MCP_PATHS) {
+    app.all(path, handleMcpRequest);
+  }
 
   function shutdown() {
     for (const [, entry] of sessions) {

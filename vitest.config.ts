@@ -5,7 +5,7 @@ config();
 
 export default defineConfig({
   test: {
-    exclude: ['dist/**', 'node_modules/**', '.claude/worktrees/**'],
+    exclude: ['dist/**', 'node_modules/**', '.claude/worktrees/**', 'dedalus-typescript/**'],
     testTimeout: 60_000,
     hookTimeout: 30_000,
     // Run test files sequentially to avoid Exa API rate limits during integration tests

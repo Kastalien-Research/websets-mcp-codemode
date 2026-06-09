@@ -24,16 +24,10 @@ describe('Health endpoint', () => {
     });
   });
 
-  it('GET /health returns 200 with status ok', async () => {
+  it('GET /health returns 200 with OK body (Dedalus/Stainless convention)', async () => {
     const res = await fetch(`${baseUrl}/health`);
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toEqual({ status: 'ok' });
-  });
-
-  it('GET /health returns JSON content-type', async () => {
-    const res = await fetch(`${baseUrl}/health`);
-    expect(res.headers.get('content-type')).toMatch(/application\/json/);
+    expect(await res.text()).toBe('OK');
   });
 });
 
@@ -84,6 +78,18 @@ describe('Tool registration (no API key required)', () => {
       const content = result.content as Array<{ type: string; text: string }>;
       const data = JSON.parse(content[0].text);
       expect(data.total).toBeGreaterThan(0);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('tools/list works on root path for Dedalus/Stainless hosting', async () => {
+    const client = new Client({ name: 'health-test', version: '1.0.0' });
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/`));
+    try {
+      await client.connect(transport);
+      const result = await client.listTools();
+      expect(result.tools).toHaveLength(3);
     } finally {
       await client.close();
     }

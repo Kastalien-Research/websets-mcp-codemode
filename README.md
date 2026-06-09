@@ -6,7 +6,7 @@ The current runtime model is HTTP MCP behind Docker. Not a published npm package
 
 ## Current Shape
 
-- MCP transport: HTTP at `/mcp`
+- MCP transport: HTTP at `/` (Dedalus/Stainless) and `/mcp` (local compat)
 - Primary runtime: Docker Compose
 - Three MCP tools: `search`, `execute`, `status`
 - Workflow registry exposed via `tasks.create` / `tasks.get` / `tasks.cancel` operations (`semantic.cron`, `research.deep`, `convergent.search`, `verify.enrichments`, several retrieval workflows, more — see [Workflows](#workflows))
@@ -45,7 +45,8 @@ The server listens on port `7860` by default.
 
 | Name | Required | Default | Purpose |
 |------|----------|---------|---------|
-| `EXA_API_KEY` | yes | — | Exa API key (Websets-enabled account) |
+| `EXA_API_KEY` | yes* | — | Exa API key (Websets-enabled account). *On Dedalus, users can supply via Required Credentials (`x-stainless-mcp-client-envs`) or `x-api-key` header instead. |
+| `MCP_SERVER_NAME` | no | `websets` | MCP server name; should match Dedalus marketplace slug |
 | `PORT` | no | `7860` | HTTP port |
 | `WEBSETS_PUBLIC_URL` | no* | — | Public URL of this server. Workflows that auto-register webhooks (`semantic.cron`) use it to tell Exa where to deliver events. *Required if you want auto-registration. Leave unset to disable. |
 | `EXA_WEBHOOK_SECRET` | no | — | Account-level fallback secret for inbound webhook signature verification. New deployments shouldn't need this; per-webhook secrets are captured automatically (see [Webhook Receiver](#webhook-receiver)). |
