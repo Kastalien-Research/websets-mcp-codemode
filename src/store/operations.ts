@@ -10,6 +10,7 @@ import {
   getUninvestigatedLean,
   countUninvestigatedItems,
   getDb,
+  upsertItem as dbUpsertItem,
   upsertCompany as dbUpsertCompany,
   recordLensHit as dbRecordLensHit,
   updateScore as dbUpdateScore,
@@ -24,6 +25,17 @@ export const Schemas = {
     type: z.string(),
     value: z.string(),
     source: z.string().optional(),
+  }),
+  syncItem: z.object({
+    id: z.string(),
+    websetId: z.string(),
+    name: z.string().optional(),
+    url: z.string().optional(),
+    entityType: z.string().optional(),
+    enrichments: z.record(z.unknown()).optional(),
+    evaluations: z.array(z.unknown()).optional(),
+    raw: z.unknown().optional(),
+    createdAt: z.string().optional(),
   }),
   getItem: z.object({
     itemId: z.string(),
@@ -84,6 +96,25 @@ export const annotate: OperationHandler = async (args) => {
     return successResult({ annotationId: id });
   } catch (error) {
     return errorResult('store.annotate', error);
+  }
+};
+
+export const syncItem: OperationHandler = async (args) => {
+  try {
+    dbUpsertItem({
+      id: args.id as string,
+      websetId: args.websetId as string,
+      name: args.name as string | undefined,
+      url: args.url as string | undefined,
+      entityType: args.entityType as string | undefined,
+      enrichments: args.enrichments as Record<string, unknown> | undefined,
+      evaluations: args.evaluations as unknown[] | undefined,
+      raw: args.raw,
+      createdAt: args.createdAt as string | undefined,
+    });
+    return successResult({ id: args.id, synced: true });
+  } catch (error) {
+    return errorResult('store.syncItem', error);
   }
 };
 
