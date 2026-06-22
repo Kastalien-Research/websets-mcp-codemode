@@ -5,6 +5,7 @@ import type { OperationHandler, ToolResult } from '../handlers/types.js';
 import { successResult, errorResult } from '../handlers/types.js';
 import {
   annotateItem,
+  upsertItem,
   getItemWithAnnotations,
   getUninvestigatedItems,
   getDb,
@@ -33,6 +34,17 @@ export const Schemas = {
   query: z.object({
     sql: z.string(),
     params: z.array(z.unknown()).optional(),
+  }),
+  syncItem: z.object({
+    id: z.string(),
+    websetId: z.string(),
+    name: z.string().optional(),
+    url: z.string().optional(),
+    entityType: z.string().optional(),
+    enrichments: z.record(z.unknown()).optional(),
+    evaluations: z.array(z.unknown()).optional(),
+    raw: z.unknown().optional(),
+    createdAt: z.string().optional(),
   }),
   upsertCompany: z.object({
     domain: z.string(),
@@ -141,6 +153,25 @@ export const query: OperationHandler = async (args) => {
     return successResult({ rows, count: rows.length });
   } catch (error) {
     return errorResult('store.query', error);
+  }
+};
+
+export const syncItem: OperationHandler = async (args) => {
+  try {
+    upsertItem({
+      id: args.id as string,
+      websetId: args.websetId as string,
+      name: args.name as string | undefined,
+      url: args.url as string | undefined,
+      entityType: args.entityType as string | undefined,
+      enrichments: args.enrichments as Record<string, unknown> | undefined,
+      evaluations: args.evaluations as unknown[] | undefined,
+      raw: args.raw,
+      createdAt: args.createdAt as string | undefined,
+    });
+    return successResult({ id: args.id, synced: true });
+  } catch (error) {
+    return errorResult('store.syncItem', error);
   }
 };
 

@@ -38,10 +38,20 @@ for pat, why in deny_determinism:
 
 # gh defaults to the upstream parent (exa-labs), not the Kastalien-Research fork.
 # Require an explicit repo target on PR creation to avoid PRs against upstream.
-# Anchor to a command boundary so the pattern doesn't trip on the literal string
-# appearing inside a quoted arg (e.g. a commit message that mentions gh pr create).
-if re.search(r"(?:^|[;&|(\n]|&&|\|\|)\s*gh\s+pr\s+create\b", c) and not re.search(r"(^|\s)(-r|--repo)(\s|=)", c):
-    block("`gh pr create` must set the target repo explicitly with -R <owner/repo> "
-          "(gh defaults to the upstream parent, not the fork)")
+#
+# Strip quoted text first so neither the literal string `gh pr create` nor a fake
+# `-R` inside a --title/--body can be mistaken for a real command or repo flag.
+# Treat `;`, `&`, `|`, `(`, backtick (command substitution), and newline as command
+# boundaries, and allow benign wrappers (command/time/env/nohup/exec/builtin/stdbuf)
+# before `gh`. The repo-flag check is scoped to each create command's own argument
+# span so an -R on an unrelated earlier command cannot satisfy it.
+c_clean = re.sub(r"'[^']*'|\"[^\"]*\"", " ", c)
+boundary = r"[;&|(`\n]|&&|\|\|"
+wrappers = r"(?:(?:command|time|env|nohup|exec|builtin|stdbuf)\s+)*"
+for m in re.finditer(rf"(?:^|{boundary})\s*{wrappers}gh\s+pr\s+create\b", c_clean):
+    args = re.split(boundary, c_clean[m.end():], maxsplit=1)[0]
+    if not re.search(r"(^|\s)(-r|--repo)(\s|=)", args):
+        block("`gh pr create` must set the target repo explicitly with -R <owner/repo> "
+              "(gh defaults to the upstream parent, not the fork)")
 
 sys.exit(0)
