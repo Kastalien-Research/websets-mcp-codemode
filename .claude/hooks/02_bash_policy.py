@@ -36,4 +36,12 @@ for pat, why in deny_determinism:
     if re.search(pat, c):
         block(why)
 
+# gh defaults to the upstream parent (exa-labs), not the Kastalien-Research fork.
+# Require an explicit repo target on PR creation to avoid PRs against upstream.
+# Anchor to a command boundary so the pattern doesn't trip on the literal string
+# appearing inside a quoted arg (e.g. a commit message that mentions gh pr create).
+if re.search(r"(?:^|[;&|(\n]|&&|\|\|)\s*gh\s+pr\s+create\b", c) and not re.search(r"(^|\s)(-r|--repo)(\s|=)", c):
+    block("`gh pr create` must set the target repo explicitly with -R <owner/repo> "
+          "(gh defaults to the upstream parent, not the fork)")
+
 sys.exit(0)
