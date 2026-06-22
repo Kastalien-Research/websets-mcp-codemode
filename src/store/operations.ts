@@ -7,6 +7,8 @@ import {
   annotateItem,
   getItemWithAnnotations,
   getUninvestigatedItems,
+  getUninvestigatedLean,
+  countUninvestigatedItems,
   getDb,
   upsertItem as dbUpsertItem,
   upsertCompany as dbUpsertCompany,
@@ -41,6 +43,7 @@ export const Schemas = {
   listUninvestigated: z.object({
     websetId: z.string().optional(),
     limit: z.number().optional(),
+    verbose: z.boolean().optional(),
   }),
   query: z.object({
     sql: z.string(),
@@ -137,16 +140,40 @@ export const getItem: OperationHandler = async (args) => {
 
 export const listUninvestigated: OperationHandler = async (args) => {
   try {
+    const websetId = args.websetId as string | undefined;
     const limit = (args.limit as number) ?? 50;
-    let items = getUninvestigatedItems(args.websetId as string | undefined);
-    if (items.length > limit) items = items.slice(0, limit);
+    const total = countUninvestigatedItems(websetId);
+
+    // Default: lean worklist (no `raw`/`evaluations` blobs). Opt into the full
+    // record with `verbose: true` when you genuinely need the heavy payload.
+    if (args.verbose) {
+      const items = getUninvestigatedItems(websetId, limit);
+      return successResult({
+        items: items.map(i => ({
+          ...i,
+          enrichments: i.enrichments ? JSON.parse(i.enrichments) : null,
+          evaluations: i.evaluations ? JSON.parse(i.evaluations) : null,
+        })),
+        count: items.length,
+        total,
+        truncated: items.length < total,
+      });
+    }
+
+    const rows = getUninvestigatedLean(websetId, limit);
     return successResult({
-      items: items.map(i => ({
-        ...i,
-        enrichments: i.enrichments ? JSON.parse(i.enrichments) : null,
-        evaluations: i.evaluations ? JSON.parse(i.evaluations) : null,
+      items: rows.map(r => ({
+        itemId: r.id,
+        websetId: r.webset_id,
+        name: r.name,
+        url: r.url,
+        entityType: r.entity_type,
+        enrichmentSummary: r.enrichments ? JSON.parse(r.enrichments) : null,
+        receivedAt: r.received_at,
       })),
-      count: items.length,
+      count: rows.length,
+      total,
+      truncated: rows.length < total,
     });
   } catch (error) {
     return errorResult('store.listUninvestigated', error);

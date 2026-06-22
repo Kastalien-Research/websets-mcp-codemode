@@ -1,6 +1,6 @@
 {
   "_doc": "Per-webset filter for the websets-channel. The channel watches this file and reloads on change. 'enabled: false' silences a webset entirely. 'events' (optional, array of event types) acts as an event-type allowlist when present; missing/null means all events. 'default' applies to any webset not listed below.",
-  "default": { "enabled": false },
+  "default": { "enabled": true },
   "websets": {
     "webset_01kqb1jcy7tq6r6h0yad19r7ke": {
       "label": "model-drift-monitor / twitter_complaints",

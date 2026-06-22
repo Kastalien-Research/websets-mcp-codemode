@@ -1,20 +1,24 @@
 import { z } from 'zod';
 import type { Exa } from 'exa-js';
-import type { OperationHandler, ToolResult } from '../handlers/types.js';
+import type { OperationContext, OperationHandler, ToolResult } from '../handlers/types.js';
 
 import * as websets from '../handlers/websets.js';
 import * as searches from '../handlers/searches.js';
 import * as items from '../handlers/items.js';
 import * as enrichments from '../handlers/enrichments.js';
 import * as monitors from '../handlers/monitors.js';
+import * as searchMonitors from '../handlers/searchMonitors.js';
 import * as webhooks from '../handlers/webhooks.js';
 import * as imports from '../handlers/imports.js';
 import * as events from '../handlers/events.js';
 import * as tasks from '../handlers/tasks.js';
 import * as research from '../handlers/research.js';
+import * as agentRuns from '../handlers/agentRuns.js';
 import * as exaSearch from '../handlers/exa.js';
 import * as github from '../handlers/github.js';
+import * as teams from '../handlers/teams.js';
 import * as store from '../store/operations.js';
+import * as notebook from '../handlers/notebook.js';
 import { applyCompatCoercions, type AppliedCoercion, type CompatMode } from './coercion.js';
 
 // Single barrel import for all workflow side-effect registrations
@@ -62,6 +66,15 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'monitors.getAll': { handler: monitors.getAll, summary: 'Auto-paginate all monitors' },
   'monitors.runs.list': { handler: monitors.runsList, summary: 'List monitor runs' },
   'monitors.runs.get': { handler: monitors.runsGet, summary: 'Get a monitor run' },
+  'searchMonitors.create': { handler: searchMonitors.create, summary: 'Create a top-level Search Monitor (standalone scheduled search with its own webhook delivery)' },
+  'searchMonitors.get': { handler: searchMonitors.get, summary: 'Get a Search Monitor by ID' },
+  'searchMonitors.list': { handler: searchMonitors.list, summary: 'List Search Monitors (filter by status: active|paused|disabled)' },
+  'searchMonitors.update': { handler: searchMonitors.update, summary: 'Update a Search Monitor' },
+  'searchMonitors.delete': { handler: searchMonitors.del, summary: 'Delete a Search Monitor' },
+  'searchMonitors.trigger': { handler: searchMonitors.trigger, summary: 'Manually trigger an immediate run of a Search Monitor' },
+  'searchMonitors.getAll': { handler: searchMonitors.getAll, summary: 'Auto-paginate all Search Monitors' },
+  'searchMonitors.runs.list': { handler: searchMonitors.runsList, summary: 'List runs for a Search Monitor' },
+  'searchMonitors.runs.get': { handler: searchMonitors.runsGet, summary: 'Get a specific Search Monitor run' },
   'webhooks.create': { handler: webhooks.create, summary: 'Create a webhook' },
   'webhooks.get': { handler: webhooks.get, summary: 'Get a webhook' },
   'webhooks.list': { handler: webhooks.list, summary: 'List webhooks' },
@@ -89,6 +102,9 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'research.get': { handler: research.get, summary: 'Get research status' },
   'research.list': { handler: research.list, summary: 'List research requests' },
   'research.pollUntilFinished': { handler: research.pollUntilFinished, summary: 'Poll until research completes' },
+  'agentRuns.create': { handler: agentRuns.create, summary: 'Create an Agent run (beta). Pass stream:true for SSE-streamed lifecycle events via progress notifications.' },
+  'agentRuns.get': { handler: agentRuns.get, summary: 'Get an Agent run by ID' },
+  'agentRuns.list': { handler: agentRuns.list, summary: 'List Agent runs for the team (cursor + limit)' },
   'exa.search': { handler: exaSearch.search, summary: 'Instant web search' },
   'exa.findSimilar': { handler: exaSearch.findSimilar, summary: 'Find pages similar to a URL' },
   'exa.getContents': { handler: exaSearch.getContents, summary: 'Extract content from URLs' },
@@ -98,6 +114,7 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'github.getRepo': { handler: github.getRepo, summary: 'Get a specific repo by owner/name' },
   'github.getUserLanguages': { handler: github.getUserLanguages, summary: 'Get primary language from user repos' },
   'github.verifyProfile': { handler: github.verifyProfile, summary: 'Verify GitHub profile exists with summary data' },
+  'teams.me': { handler: teams.me, summary: 'Get the authenticated team plus current concurrency usage and limits' },
   'store.annotate': { handler: store.annotate, summary: 'Annotate a local item (judgment, tag, note)' },
   'store.syncItem': { handler: store.syncItem, summary: 'Mirror a Webset item into the local shadow store (required before annotating)' },
   'store.getItem': { handler: store.getItem, summary: 'Get item with annotations from local store' },
@@ -109,6 +126,13 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'store.saveVerdict': { handler: store.saveVerdictOp, summary: 'Save a verdict for a company' },
   'store.getCompany': { handler: store.getCompanyOp, summary: 'Get company with lens hits, score, and verdict' },
   'store.listCandidates': { handler: store.listCandidatesOp, summary: 'List candidate companies by score/verdict' },
+  'notebook.create': { handler: notebook.create, summary: 'Create a thesis notebook (.src.md) — durable, re-runnable Code Mode artifact' },
+  'notebook.get': { handler: notebook.get, summary: 'Get a thesis notebook: decoded cells, manifest, and verdict run history' },
+  'notebook.appendCell': { handler: notebook.appendCellOp, summary: 'Append a markdown or code cell to a thesis notebook' },
+  'notebook.appendRun': { handler: notebook.appendRunOp, summary: 'Append a verdict Run section to a notebook and update the latest verdict index' },
+  'notebook.runCell': { handler: notebook.runCell, summary: 'Execute a notebook code cell through the Code Mode sandbox and append the result' },
+  'notebook.list': { handler: notebook.list, summary: 'List thesis notebooks with their latest verdict, optionally filtered by verdict' },
+  'notebook.render': { handler: notebook.render, summary: 'Render a thesis notebook as raw .src.md text for glassBook/Srcbook import' },
 };
 
 export const OPERATION_NAMES = Object.keys(OPERATIONS) as [string, ...string[]];
@@ -143,6 +167,15 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'monitors.getAll': monitors.Schemas.getAll,
   'monitors.runs.list': monitors.Schemas.runsList,
   'monitors.runs.get': monitors.Schemas.runsGet,
+  'searchMonitors.create': searchMonitors.Schemas.create,
+  'searchMonitors.get': searchMonitors.Schemas.get,
+  'searchMonitors.list': searchMonitors.Schemas.list,
+  'searchMonitors.update': searchMonitors.Schemas.update,
+  'searchMonitors.delete': searchMonitors.Schemas.del,
+  'searchMonitors.trigger': searchMonitors.Schemas.trigger,
+  'searchMonitors.getAll': searchMonitors.Schemas.getAll,
+  'searchMonitors.runs.list': searchMonitors.Schemas.runsList,
+  'searchMonitors.runs.get': searchMonitors.Schemas.runsGet,
   'webhooks.create': webhooks.Schemas.create,
   'webhooks.get': webhooks.Schemas.get,
   'webhooks.list': webhooks.Schemas.list,
@@ -170,6 +203,9 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'research.get': research.Schemas.get,
   'research.list': research.Schemas.list,
   'research.pollUntilFinished': research.Schemas.pollUntilFinished,
+  'agentRuns.create': agentRuns.Schemas.create,
+  'agentRuns.get': agentRuns.Schemas.get,
+  'agentRuns.list': agentRuns.Schemas.list,
   'exa.search': exaSearch.Schemas.search,
   'exa.findSimilar': exaSearch.Schemas.findSimilar,
   'exa.getContents': exaSearch.Schemas.getContents,
@@ -179,6 +215,7 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'github.getRepo': github.Schemas.getRepo,
   'github.getUserLanguages': github.Schemas.getUserLanguages,
   'github.verifyProfile': github.Schemas.verifyProfile,
+  'teams.me': teams.Schemas.me,
   'store.annotate': store.Schemas.annotate,
   'store.syncItem': store.Schemas.syncItem,
   'store.getItem': store.Schemas.getItem,
@@ -190,6 +227,13 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'store.saveVerdict': store.Schemas.saveVerdict,
   'store.getCompany': store.Schemas.getCompany,
   'store.listCandidates': store.Schemas.listCandidates,
+  'notebook.create': notebook.Schemas.create,
+  'notebook.get': notebook.Schemas.get,
+  'notebook.appendCell': notebook.Schemas.appendCell,
+  'notebook.appendRun': notebook.Schemas.appendRun,
+  'notebook.runCell': notebook.Schemas.runCell,
+  'notebook.list': notebook.Schemas.list,
+  'notebook.render': notebook.Schemas.render,
 };
 
 export function withCoercionMetadata(
@@ -276,6 +320,7 @@ export async function dispatchOperation(
   args: Record<string, unknown>,
   exa: Exa,
   compatMode: CompatMode = 'strict',
+  ctx?: OperationContext,
 ): Promise<ToolResult> {
   const meta = OPERATIONS[operation];
   if (!meta) {
@@ -324,6 +369,6 @@ export async function dispatchOperation(
     );
   }
 
-  const result = await meta.handler(validatedArgs, exa);
+  const result = await meta.handler(validatedArgs, exa, ctx);
   return withCoercionMetadata(result, coercion.coercions, coercion.warnings);
 }

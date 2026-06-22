@@ -16,6 +16,18 @@ try:
 except (json.JSONDecodeError, OSError):
     sys.exit(0)
 
+# Session-staleness guard: the canary state file persists across conversations.
+# On a fresh session, this hook fires on the user's first prompt BEFORE
+# 10_canary_monitor.py has had a chance to run (no tool calls yet), so
+# `signals` still holds the previous session's counters. Cross-check the
+# session_id from hook input against the one stored in the file — if they
+# mismatch, the data is from a previous session and we should not inject it
+# as if it were the current session's pressure.
+current_session = data.get("session_id", "")
+stored_session = signals.get("session_id", "")
+if current_session and stored_session and current_session != stored_session:
+    sys.exit(0)
+
 pressure = signals.get("pressure", 0.0)
 if pressure < 0.5:
     sys.exit(0)

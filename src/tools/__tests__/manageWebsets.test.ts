@@ -68,6 +68,7 @@ describe('dispatchOperation', () => {
       {
         websetId: 'ws_1',
         query: 'ai startups',
+        count: 25,
         entity: { type: 'company' },
         criteria: [{ description: 'has funding' }],
       },
@@ -77,6 +78,7 @@ describe('dispatchOperation', () => {
 
     expect(createSpy).toHaveBeenCalledWith('ws_1', {
       query: 'ai startups',
+      count: 25,
       entity: { type: 'company' },
       criteria: [{ description: 'has funding' }],
     });
@@ -130,6 +132,7 @@ describe('dispatchOperation', () => {
         compat: { mode: 'aggressive' as any },
         websetId: 'ws_1',
         query: 'ai startups',
+        count: 25,
       },
       exa,
       'strict',
@@ -160,6 +163,7 @@ describe('dispatchOperation', () => {
       {
         websetId: 'ws_1',
         query: 'ai startups',
+        count: 25,
         entity: 'company',
       },
       exa,
@@ -168,6 +172,7 @@ describe('dispatchOperation', () => {
 
     expect(createSpy).toHaveBeenNthCalledWith(1, 'ws_1', {
       query: 'ai startups',
+      count: 25,
       entity: { type: 'company' },
     });
 
@@ -178,6 +183,7 @@ describe('dispatchOperation', () => {
         compat: { mode: 'strict' },
         websetId: 'ws_1',
         query: 'ai startups',
+        count: 25,
         entity: 'company',
       },
       exa,
@@ -210,6 +216,7 @@ describe('dispatchOperation', () => {
         compat: { mode: 'safe', preview: true },
         websetId: 'ws_1',
         query: 'ai startups',
+        count: 25,
         entity: 'company',
       },
       exa,
@@ -224,9 +231,10 @@ describe('dispatchOperation', () => {
     expect(body.normalizedArgs).toEqual({
       websetId: 'ws_1',
       query: 'ai startups',
+      count: 25,
       entity: { type: 'company' },
     });
-    expect(body._coercions).toHaveLength(1);
+    expect(body._coercions).toHaveLength(1); // entity only; count is already a number
   });
 
   it('preserves enrichment options when creating websets', async () => {

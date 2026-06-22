@@ -117,6 +117,10 @@ describe('processWebhookItem', () => {
     expect(candidate!.companyDomain).toBe('vercel.com');
     expect(candidate!.lensHits).toContain('agent_buildout');
     expect(candidate!.lensHits).toContain('control_pain');
+    // Item identity is carried through so the channel can target this exact item
+    // when kicking /sweep-webset.
+    expect(candidate!.itemId).toBe('item_test');
+    expect(candidate!.websetId).toBe('ws_agent_buildout');
   });
 });
 

@@ -3,11 +3,14 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Exa } from 'exa-js';
 import { executeInSandbox } from './sandbox.js';
 import type { CompatMode } from './coercion.js';
+import type { OperationContext } from '../handlers/types.js';
 
 const inputSchema = z.object({
   code: z.string().describe('JavaScript code to execute in the sandbox'),
   timeout: z.number().optional().default(30000)
     .describe('Execution timeout in milliseconds (max 120000)'),
+  silent: z.boolean().optional().default(false)
+    .describe('Suppress MCP notifications/progress emission from streaming operations. Default false. Set true if the calling client receives push delivery through another channel (e.g. the websets-channel bridge in Claude Code) and you don\'t want redundant progress notifications.'),
 });
 
 const DESCRIPTION = `Execute JavaScript code with access to all Exa Websets operations.
@@ -51,20 +54,63 @@ export function registerExecuteTool(
       description: DESCRIPTION,
       inputSchema: inputSchema as any,
     },
-    async (input: any) => {
+    async (input: any, extra: any) => {
       const parsed = inputSchema.parse(input);
 
+      // Build the operation context that's threaded through callOperation
+      // into each handler. The MCP SDK exposes:
+      //   extra._meta?.progressToken   — caller's progress correlator
+      //   extra.sendNotification(n)    — sends notification on this request's
+      //                                  SSE stream (auto-tagged with the
+      //                                  related requestId by the transport)
+      //   extra.signal                 — AbortSignal for cancellation
+      // Any of these may be absent (e.g. in tests). Build sendProgress only
+      // when both a progressToken and sendNotification exist.
+      const progressToken = extra?._meta?.progressToken;
+      const canSendProgress =
+        progressToken !== undefined && typeof extra?.sendNotification === 'function';
+
+      const sendProgress = canSendProgress
+        ? async (progress: number, message?: string): Promise<void> => {
+            await extra.sendNotification({
+              method: 'notifications/progress',
+              params: {
+                progressToken,
+                progress,
+                ...(message !== undefined ? { message } : {}),
+              },
+            });
+          }
+        : undefined;
+
+      const ctx: OperationContext = {
+        sendProgress,
+        signal: extra?.signal,
+        silent: parsed.silent,
+      };
+
       try {
-        const { result, logs } = await executeInSandbox(parsed.code, exa, {
+        const { result, logs, resourceLinks } = await executeInSandbox(parsed.code, exa, {
           timeoutMs: Math.min(parsed.timeout, 120_000),
           compatMode,
+          ctx,
         });
 
         const output: Record<string, unknown> = { result };
         if (logs.length > 0) output.logs = logs;
 
+        // Forward any resource_link blocks the inner handlers attached
+        // (e.g. tasks.create returning a workflow:// link). Without this
+        // append the MCP client never sees them: the sandbox unwraps only
+        // content[0].text into the JS return value, and the execute tool
+        // would otherwise return only that text. Surfacing them here gives
+        // the model inline access to workflow docs / spec resources
+        // exactly when it dispatches the corresponding operation.
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
+          content: [
+            { type: 'text' as const, text: JSON.stringify(output, null, 2) },
+            ...resourceLinks,
+          ],
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
