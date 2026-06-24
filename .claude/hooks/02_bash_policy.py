@@ -47,7 +47,17 @@ for pat, why in deny_determinism:
 # span so an -R on an unrelated earlier command cannot satisfy it.
 c_clean = re.sub(r"'[^']*'|\"[^\"]*\"", " ", c)
 boundary = r"[;&|(`\n]|&&|\|\|"
-wrappers = r"(?:(?:command|time|env|nohup|exec|builtin|stdbuf)\s+)*"
+# Allow common wrapper-specific options before the wrapped command, e.g.
+# `env GITHUB_TOKEN=x gh`, `env -i gh`, `time -p gh`, and `stdbuf -oL gh`.
+env_arg = r"(?:-[^\s]+|[a-z_][a-z0-9_]*=[^\s]+)"
+time_arg = r"(?:-[^\s]+)"
+stdbuf_arg = r"(?:-[ioe][^\s]*)"
+wrappers = (
+    rf"(?:(?:command|nohup|exec|builtin)\s+|"
+    rf"time(?:\s+{time_arg})*\s+|"
+    rf"env(?:\s+{env_arg})*\s+|"
+    rf"stdbuf(?:\s+{stdbuf_arg})*\s+)*"
+)
 for m in re.finditer(rf"(?:^|{boundary})\s*{wrappers}gh\s+pr\s+create\b", c_clean):
     args = re.split(boundary, c_clean[m.end():], maxsplit=1)[0]
     if not re.search(r"(^|\s)(-r|--repo)(\s|=)", args):
