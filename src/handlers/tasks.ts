@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import type { OperationHandler } from './types.js';
-import { successResult, errorResult, requireParams } from './types.js';
+import type { OperationHandler, ResourceLinkContent } from './types.js';
+import { successResult, successResultWithLinks, errorResult, requireParams } from './types.js';
 import { taskStore } from '../lib/taskStore.js';
-import { workflowRegistry } from '../workflows/types.js';
+import { workflowRegistry, workflowMetadata } from '../workflows/types.js';
 import { WorkflowError } from '../workflows/helpers.js';
 
 export const Schemas = {
@@ -50,7 +50,22 @@ export const create: OperationHandler = async (args, exa) => {
         recoverable: err instanceof WorkflowError ? err.recoverable : false,
       }));
 
-    return successResult({ taskId: task.id, status: 'pending' });
+    // Per spec ("Architectural change: embedded resource_link"): when the
+    // dispatched workflow has documented metadata, attach a resource_link
+    // pointing at its `workflow://<type>` resource so the caller can read the
+    // docs inline instead of issuing a separate fetch. Workflows without
+    // metadata (e.g. echo smoke tests) get a plain success result.
+    const meta = workflowMetadata.get(type);
+    const links: ResourceLinkContent[] = meta
+      ? [{
+          type: 'resource_link',
+          uri: `workflow://${type}`,
+          name: meta.title,
+          mimeType: 'text/markdown',
+          description: meta.description.split('.')[0],
+        }]
+      : [];
+    return successResultWithLinks({ taskId: task.id, status: 'pending' }, links);
   } catch (error) {
     return errorResult('tasks.create', error, 'Ensure task type is valid (use tasks.list to see running tasks). Task args should match the workflow schema — use the search tool to discover required parameters.');
   }

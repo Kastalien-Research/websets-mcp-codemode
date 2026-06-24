@@ -25,6 +25,7 @@ export interface AccountStatus {
     operationCount: number;
     compatMode: string;
     hint: string;
+    notifications: string;
   };
   timestamp: string;
 }
@@ -121,6 +122,8 @@ async function getAccountStatus(exa: Exa, compatMode: string): Promise<AccountSt
       operationCount: Object.keys(OPERATIONS).length,
       compatMode,
       hint: 'Use search tool to discover specific operations, execute tool to run code',
+      notifications:
+        'If the websets-channel bridge is connected, webhook events arrive in your context as <channel source="websets-channel"> blocks. Delivery is turn-gated: events queue and arrive at your next turn boundary and NEVER interrupt an in-progress turn; bursts are delivered together (handle as a group). A block that does not appear immediately is queued, not lost — finish the turn and look again. Design handling to act from a single notification where possible.',
     },
     timestamp: new Date().toISOString(),
   };

@@ -1,18 +1,68 @@
 import type { Exa } from 'exa-js';
 
+export type TextContent = { type: 'text'; text: string };
+
+export type ResourceLinkContent = {
+  type: 'resource_link';
+  uri: string;
+  name: string;
+  mimeType?: string;
+  description?: string;
+};
+
+/**
+ * Tool responses always lead with a `TextContent` block (callers rely on
+ * `content[0].text` being the JSON/error payload). Additional blocks can be
+ * `TextContent` or `ResourceLinkContent` — e.g. resource_link enrichment
+ * appended by `successResultWithLinks` per the spec.
+ */
 export type ToolResult = {
-  content: Array<{ type: 'text'; text: string }>;
+  content: [TextContent, ...Array<TextContent | ResourceLinkContent>];
   isError?: boolean;
 };
 
+/**
+ * Context plumbed from the MCP transport into operation handlers.
+ * - `sendProgress`: emit `notifications/progress` on the in-flight tool call.
+ *   Present only when the caller supplied a `progressToken` in the request's
+ *   `_meta`. Undefined otherwise (handlers should no-op gracefully).
+ * - `signal`: AbortSignal from the request; honor for cancellation.
+ * - `silent`: caller asked to suppress MCP notifications (e.g. because they
+ *   already receive push delivery via the websets-channel bridge). Handlers
+ *   that would otherwise call `sendProgress` should skip when `silent` is true.
+ */
+export interface OperationContext {
+  sendProgress?: (progress: number, message?: string) => Promise<void>;
+  signal?: AbortSignal;
+  silent?: boolean;
+}
+
 export type OperationHandler = (
   args: Record<string, unknown>,
-  exa: Exa
+  exa: Exa,
+  ctx?: OperationContext,
 ) => Promise<ToolResult>;
 
 export function successResult(data: unknown): ToolResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+  };
+}
+
+/**
+ * Build a success result with extra `resource_link` content blocks appended
+ * after the JSON text. Empty link arrays produce only the text block — never
+ * trailing placeholder entries.
+ *
+ * See specs/spec-update-052226/workflows-as-prompts-and-resources.md
+ * ("Architectural change: embedded resource_link") for the motivation.
+ */
+export function successResultWithLinks(data: unknown, links: ResourceLinkContent[]): ToolResult {
+  return {
+    content: [
+      { type: 'text', text: JSON.stringify(data, null, 2) },
+      ...links,
+    ],
   };
 }
 

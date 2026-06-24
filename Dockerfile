@@ -13,7 +13,9 @@ RUN corepack enable && corepack prepare pnpm@10.32.1 --activate
 COPY package.json pnpm-lock.yaml .npmrc ./
 COPY tsconfig.json ./
 
-# Install all dependencies (scripts enabled for native module compilation)
+# Install all dependencies. better-sqlite3's native build runs because it is
+# allowlisted in package.json pnpm.onlyBuiltDependencies (pnpm 10 blocks
+# dependency build scripts by default).
 RUN pnpm install --frozen-lockfile
 
 # Copy source code

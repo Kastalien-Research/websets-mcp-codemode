@@ -18,6 +18,11 @@ export interface CompactCandidate {
   score: number;
   primaryUrl: string;
   summary: string;
+  // Item identity, so a downstream consumer (e.g. the channel) can target this
+  // exact item — kicking /sweep-webset with { items: [{ itemId, websetId }] }
+  // rather than re-deriving it. Both are already in scope at build time below.
+  itemId: string;
+  websetId: string;
 }
 
 /**
@@ -93,6 +98,8 @@ export function processWebhookItem(
     score,
     primaryUrl: url,
     summary: evidenceSummary || `${entityName} detected via ${lensId}`,
+    itemId,
+    websetId,
   };
 
   // Only emit for actionable candidates (score >= 7)

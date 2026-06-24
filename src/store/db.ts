@@ -124,6 +124,17 @@ function initSchema(db: Database.Database): void {
       url TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS notebooks (
+      slug TEXT PRIMARY KEY,
+      title TEXT,
+      path TEXT NOT NULL,
+      statement TEXT,
+      latest_verdict TEXT,
+      latest_confidence REAL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }
 
@@ -252,21 +263,72 @@ export function upsertAnnotation(
   return Number(result.lastInsertRowid);
 }
 
-export function getUninvestigatedItems(websetId?: string): ItemRow[] {
+/** Lightweight worklist row — omits the heavy `raw` and `evaluations` columns. */
+export interface UninvestigatedLeanRow {
+  id: string;
+  webset_id: string;
+  name: string | null;
+  url: string | null;
+  entity_type: string | null;
+  enrichments: string | null; // JSON string (flat enrichmentId -> value map)
+  received_at: string;
+}
+
+const UNINVESTIGATED_WHERE =
+  "NOT EXISTS (SELECT 1 FROM annotations a WHERE a.item_id = i.id AND a.type = 'judgment')";
+
+/** Total count of uninvestigated items (no LIMIT) — for honest pagination envelopes. */
+export function countUninvestigatedItems(websetId?: string): number {
+  const d = getDb();
+  if (websetId) {
+    const row = d.prepare(
+      `SELECT COUNT(*) AS n FROM items i WHERE i.webset_id = ? AND ${UNINVESTIGATED_WHERE}`,
+    ).get(websetId) as { n: number };
+    return row.n;
+  }
+  const row = d.prepare(
+    `SELECT COUNT(*) AS n FROM items i WHERE ${UNINVESTIGATED_WHERE}`,
+  ).get() as { n: number };
+  return row.n;
+}
+
+/** Lean worklist: light columns only, LIMIT applied in SQL. The default discovery path. */
+export function getUninvestigatedLean(websetId?: string, limit = 50): UninvestigatedLeanRow[] {
+  const d = getDb();
+  const cols = 'i.id, i.webset_id, i.name, i.url, i.entity_type, i.enrichments, i.received_at';
+  if (websetId) {
+    return d.prepare(`
+      SELECT ${cols} FROM items i
+      WHERE i.webset_id = ? AND ${UNINVESTIGATED_WHERE}
+      ORDER BY i.received_at DESC
+      LIMIT ?
+    `).all(websetId, limit) as UninvestigatedLeanRow[];
+  }
+  return d.prepare(`
+    SELECT ${cols} FROM items i
+    WHERE ${UNINVESTIGATED_WHERE}
+    ORDER BY i.received_at DESC
+    LIMIT ?
+  `).all(limit) as UninvestigatedLeanRow[];
+}
+
+/** Full rows (incl. `raw`/`evaluations`) for the opt-in `verbose` path. LIMIT applied in SQL. */
+export function getUninvestigatedItems(websetId?: string, limit = 50): ItemRow[] {
   const d = getDb();
   if (websetId) {
     return d.prepare(`
       SELECT i.* FROM items i
-      WHERE i.webset_id = ?
-        AND NOT EXISTS (SELECT 1 FROM annotations a WHERE a.item_id = i.id AND a.type = 'judgment')
+      WHERE i.webset_id = ? AND ${UNINVESTIGATED_WHERE}
       ORDER BY i.received_at DESC
-    `).all(websetId) as ItemRow[];
+      LIMIT ?
+    `).all(websetId, limit) as ItemRow[];
   }
   return d.prepare(`
     SELECT i.* FROM items i
-    WHERE NOT EXISTS (SELECT 1 FROM annotations a WHERE a.item_id = i.id AND a.type = 'judgment')
+    WHERE ${UNINVESTIGATED_WHERE}
     ORDER BY i.received_at DESC
-  `).all() as ItemRow[];
+    LIMIT ?
+  `).all(limit) as ItemRow[];
 }
 
 // --- Event operations ---
@@ -516,4 +578,65 @@ export function listCandidates(minScore?: number, verdict?: string): Array<{
       lensHits: hits.map(h => h.lens_id),
     };
   });
+}
+
+// --- Notebook index operations ---
+//
+// The `.src.md` file on disk is the source of truth; this table is a thin,
+// rebuildable index so notebook.list and channel/store.query consumers can read
+// the latest verdict without parsing every file.
+
+export interface NotebookRow {
+  slug: string;
+  title: string | null;
+  path: string;
+  statement: string | null;
+  latest_verdict: string | null;
+  latest_confidence: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function upsertNotebook(nb: {
+  slug: string;
+  title?: string;
+  path: string;
+  statement?: string;
+  latestVerdict?: string;
+  latestConfidence?: number;
+}): void {
+  const d = getDb();
+  d.prepare(`
+    INSERT INTO notebooks (slug, title, path, statement, latest_verdict, latest_confidence, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(slug) DO UPDATE SET
+      title = COALESCE(excluded.title, notebooks.title),
+      path = excluded.path,
+      statement = COALESCE(excluded.statement, notebooks.statement),
+      latest_verdict = COALESCE(excluded.latest_verdict, notebooks.latest_verdict),
+      latest_confidence = COALESCE(excluded.latest_confidence, notebooks.latest_confidence),
+      updated_at = datetime('now')
+  `).run(
+    nb.slug,
+    nb.title ?? null,
+    nb.path,
+    nb.statement ?? null,
+    nb.latestVerdict ?? null,
+    nb.latestConfidence ?? null,
+  );
+}
+
+export function getNotebookIndex(slug: string): NotebookRow | null {
+  const row = getDb().prepare('SELECT * FROM notebooks WHERE slug = ?').get(slug) as NotebookRow | undefined;
+  return row ?? null;
+}
+
+export function listNotebooks(verdict?: string): NotebookRow[] {
+  const d = getDb();
+  if (verdict) {
+    return d.prepare(
+      'SELECT * FROM notebooks WHERE latest_verdict = ? ORDER BY updated_at DESC',
+    ).all(verdict) as NotebookRow[];
+  }
+  return d.prepare('SELECT * FROM notebooks ORDER BY updated_at DESC').all() as NotebookRow[];
 }
