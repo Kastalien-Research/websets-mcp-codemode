@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "schwartz13-local": {
+    "websets-codemode-local": {
       "type": "http",
       "url": "http://localhost:7860/mcp"
     },

@@ -396,7 +396,7 @@ async function verifyEnrichmentsWorkflow(
   // Build ghFetch with optional token
   const ghHeaders: Record<string, string> = {
     'Accept': 'application/vnd.github+json',
-    'User-Agent': 'schwartz13-mcp',
+    'User-Agent': 'websets-codemode-mcp',
   };
   const ghToken = process.env.GITHUB_TOKEN;
   if (ghToken) ghHeaders['Authorization'] = `Bearer ${ghToken}`;

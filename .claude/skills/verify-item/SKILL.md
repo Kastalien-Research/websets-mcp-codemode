@@ -3,7 +3,7 @@ name: verify-item
 description: Verify a webset item's enrichments against public data using independent Exa searches. Returns structured verdict with confidence score, evidence, and discrepancies. Use when a channel event or workflow step requires enrichment verification before proceeding.
 argument-hint: [websetId itemId entityName]
 user-invocable: true
-allowed-tools: Read, mcp__schwartz13-local__execute, mcp__schwartz13-local__search
+allowed-tools: Read, mcp__websets-codemode-local__execute, mcp__websets-codemode-local__search
 ---
 
 Verify the enrichments for item `$1` in webset `$0` (entity: `$2`).

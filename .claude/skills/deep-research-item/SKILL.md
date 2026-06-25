@@ -3,7 +3,7 @@ name: deep-research-item
 description: Run comprehensive research on an entity — news, funding, tech stack, buyer mapping, angle building. Writes findings to the webset store and optionally to Airtable. Use after verification passes or when a channel event requires deep research on a specific entity.
 argument-hint: [entityName domain websetId]
 user-invocable: true
-allowed-tools: Read, mcp__schwartz13-local__execute, mcp__schwartz13-local__search, mcp__airtable__execute
+allowed-tools: Read, mcp__websets-codemode-local__execute, mcp__websets-codemode-local__search, mcp__airtable__execute
 ---
 
 Deep research on **$0** (domain: `$1`, webset: `$2`).
