@@ -135,6 +135,26 @@ function initSchema(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS yelp_businesses (
+      yelp_id TEXT PRIMARY KEY,
+      item_id TEXT,
+      name TEXT,
+      rating REAL,
+      review_count INTEGER,
+      price TEXT,
+      phone TEXT,
+      display_address TEXT,
+      latitude REAL,
+      longitude REAL,
+      url TEXT,
+      categories JSON,
+      raw JSON,
+      fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_yelp_item ON yelp_businesses(item_id);
+    CREATE INDEX IF NOT EXISTS idx_yelp_rating ON yelp_businesses(rating);
   `);
 }
 
@@ -639,4 +659,62 @@ export function listNotebooks(verdict?: string): NotebookRow[] {
     ).all(verdict) as NotebookRow[];
   }
   return d.prepare('SELECT * FROM notebooks ORDER BY updated_at DESC').all() as NotebookRow[];
+}
+
+// --- Yelp business operations ---
+
+export interface YelpBusinessRecord {
+  yelpId: string;
+  itemId?: string;
+  name?: string;
+  rating?: number;
+  reviewCount?: number;
+  price?: string;
+  phone?: string;
+  displayAddress?: string;
+  latitude?: number;
+  longitude?: number;
+  url?: string;
+  categories?: unknown;
+  raw?: unknown;
+}
+
+export function upsertYelpBusiness(rec: YelpBusinessRecord): void {
+  const d = getDb();
+  d.prepare(`
+    INSERT INTO yelp_businesses
+      (yelp_id, item_id, name, rating, review_count, price, phone,
+       display_address, latitude, longitude, url, categories, raw, fetched_at)
+    VALUES
+      (@yelpId, @itemId, @name, @rating, @reviewCount, @price, @phone,
+       @displayAddress, @latitude, @longitude, @url, @categories, @raw, datetime('now'))
+    ON CONFLICT(yelp_id) DO UPDATE SET
+      item_id = excluded.item_id,
+      name = excluded.name,
+      rating = excluded.rating,
+      review_count = excluded.review_count,
+      price = excluded.price,
+      phone = excluded.phone,
+      display_address = excluded.display_address,
+      latitude = excluded.latitude,
+      longitude = excluded.longitude,
+      url = excluded.url,
+      categories = excluded.categories,
+      raw = excluded.raw,
+      fetched_at = datetime('now')
+  `).run({
+    yelpId: rec.yelpId,
+    itemId: rec.itemId ?? null,
+    name: rec.name ?? null,
+    rating: rec.rating ?? null,
+    reviewCount: rec.reviewCount ?? null,
+    price: rec.price ?? null,
+    phone: rec.phone ?? null,
+    displayAddress: rec.displayAddress ?? null,
+    latitude: rec.latitude ?? null,
+    longitude: rec.longitude ?? null,
+    url: rec.url ?? null,
+    categories: rec.categories != null ? JSON.stringify(rec.categories) : null,
+    raw: rec.raw != null ? JSON.stringify(rec.raw) : null,
+  });
 }
