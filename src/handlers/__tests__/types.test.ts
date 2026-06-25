@@ -28,4 +28,18 @@ describe('errorResult', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe('Error in searches.get: timeout');
   });
+
+  it('yelp.* 401 hints at YELP_API_KEY', () => {
+    const result = errorResult('yelp.search', new Error('401 Unauthorized'));
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('YELP_API_KEY');
+    expect(result.content[0].text).not.toContain('EXA_API_KEY');
+  });
+
+  it('non-yelp 401 hints at EXA_API_KEY', () => {
+    const result = errorResult('searches.create', new Error('401 Unauthorized'));
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('EXA_API_KEY');
+    expect(result.content[0].text).not.toContain('YELP_API_KEY');
+  });
 });

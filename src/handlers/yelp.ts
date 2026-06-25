@@ -43,6 +43,7 @@ export const Schemas = {
   }),
 };
 
+// args is the Zod-validated object (unknown keys already stripped at dispatch), so forwarding it wholesale only sends schema-declared Yelp params.
 export const search: OperationHandler = async (args) => {
   try {
     return successResult(await yelpGet('/v3/businesses/search', args));

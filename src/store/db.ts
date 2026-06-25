@@ -689,7 +689,7 @@ export function upsertYelpBusiness(rec: YelpBusinessRecord): void {
       (@yelpId, @itemId, @name, @rating, @reviewCount, @price, @phone,
        @displayAddress, @latitude, @longitude, @url, @categories, @raw, datetime('now'))
     ON CONFLICT(yelp_id) DO UPDATE SET
-      item_id = excluded.item_id,
+      item_id = COALESCE(excluded.item_id, yelp_businesses.item_id),
       name = excluded.name,
       rating = excluded.rating,
       review_count = excluded.review_count,

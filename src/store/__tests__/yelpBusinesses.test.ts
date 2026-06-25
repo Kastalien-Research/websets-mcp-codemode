@@ -31,6 +31,14 @@ describe('yelp_businesses store', () => {
     expect((rows[0] as any).rating).toBe(4.5);
   });
 
+  it('preserves existing item_id when a later upsert omits itemId', () => {
+    upsertYelpBusiness({ yelpId: 'y1', itemId: 'item1', name: 'A' });
+    upsertYelpBusiness({ yelpId: 'y1', name: 'B' });
+    const row = getDb().prepare('SELECT * FROM yelp_businesses WHERE yelp_id = ?').get('y1') as any;
+    expect(row.item_id).toBe('item1');
+    expect(row.name).toBe('B');
+  });
+
   it('links to a store item and supports the navigability JOIN', () => {
     upsertItem({ id: 'item1', websetId: 'ws1', name: 'Bright Kids Daycare' });
     upsertYelpBusiness({ yelpId: 'y1', itemId: 'item1', name: 'Bright Kids', rating: 4.7, reviewCount: 52 });

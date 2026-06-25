@@ -15,11 +15,19 @@ maybe('yelp.search (live)', () => {
 
     // Resolve open verification item: confirm reviews endpoint shape/tier limit.
     // Try up to 3 businesses to find one with reviews available.
+    // NOTE: Fusion tier may return 404 for /reviews — assert the operation contract
+    // (well-formed ToolResult with JSON-parseable content) rather than requiring access.
     let reviewCount = 0;
     let reviewsFound = false;
     for (let i = 0; i < Math.min(3, data.businesses.length); i++) {
       const id = data.businesses[i].id;
       const rev = await yelp.reviews({ businessId: id }, {} as never);
+      // Operation contract: always returns a well-formed ToolResult with non-empty text content.
+      // Success payloads are JSON; error payloads are plain-text (errorResult format). Either way,
+      // content[0].text must be a non-empty string — never undefined or null.
+      expect(rev.content[0]).toBeDefined();
+      expect(typeof rev.content[0].text).toBe('string');
+      expect(rev.content[0].text.length).toBeGreaterThan(0);
       if (!rev.isError) {
         const revData = JSON.parse(rev.content[0].text);
         if (Array.isArray(revData.reviews)) {
@@ -28,6 +36,8 @@ maybe('yelp.search (live)', () => {
           console.log(`yelp.reviews returned ${reviewCount} reviews for business ${i}`);
           break;
         }
+      } else {
+        console.log(`yelp.reviews: business ${i} returned error (tier/access limitation)`);
       }
     }
     if (!reviewsFound) {
