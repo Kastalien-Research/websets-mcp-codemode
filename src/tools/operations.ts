@@ -17,6 +17,7 @@ import * as agentRuns from '../handlers/agentRuns.js';
 import * as exaSearch from '../handlers/exa.js';
 import * as github from '../handlers/github.js';
 import * as teams from '../handlers/teams.js';
+import * as yelp from '../handlers/yelp.js';
 import * as store from '../store/operations.js';
 import * as notebook from '../handlers/notebook.js';
 import { applyCompatCoercions, type AppliedCoercion, type CompatMode } from './coercion.js';
@@ -126,6 +127,12 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'store.saveVerdict': { handler: store.saveVerdictOp, summary: 'Save a verdict for a company' },
   'store.getCompany': { handler: store.getCompanyOp, summary: 'Get company with lens hits, score, and verdict' },
   'store.listCandidates': { handler: store.listCandidatesOp, summary: 'List candidate companies by score/verdict' },
+  'store.attachYelp': { handler: store.attachYelp, summary: 'Attach a Yelp business to a local item (structured, queryable)' },
+  'yelp.search': { handler: yelp.search, summary: 'Search Yelp businesses by term and location (rating, reviews, price)' },
+  'yelp.phoneSearch': { handler: yelp.phoneSearch, summary: 'Find Yelp businesses by phone number' },
+  'yelp.match': { handler: yelp.match, summary: 'Match a business on Yelp by name and address' },
+  'yelp.details': { handler: yelp.details, summary: 'Get full Yelp business details by id or alias' },
+  'yelp.reviews': { handler: yelp.reviews, summary: 'Get Yelp review excerpts for a business' },
   'notebook.create': { handler: notebook.create, summary: 'Create a thesis notebook (.src.md) — durable, re-runnable Code Mode artifact' },
   'notebook.get': { handler: notebook.get, summary: 'Get a thesis notebook: decoded cells, manifest, and verdict run history' },
   'notebook.appendCell': { handler: notebook.appendCellOp, summary: 'Append a markdown or code cell to a thesis notebook' },
@@ -227,6 +234,12 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'store.saveVerdict': store.Schemas.saveVerdict,
   'store.getCompany': store.Schemas.getCompany,
   'store.listCandidates': store.Schemas.listCandidates,
+  'store.attachYelp': store.Schemas.attachYelp,
+  'yelp.search': yelp.Schemas.search,
+  'yelp.phoneSearch': yelp.Schemas.phoneSearch,
+  'yelp.match': yelp.Schemas.match,
+  'yelp.details': yelp.Schemas.details,
+  'yelp.reviews': yelp.Schemas.reviews,
   'notebook.create': notebook.Schemas.create,
   'notebook.get': notebook.Schemas.get,
   'notebook.appendCell': notebook.Schemas.appendCell,
