@@ -17,6 +17,7 @@ import {
   saveVerdict as dbSaveVerdict,
   getCompany as dbGetCompany,
   listCandidates as dbListCandidates,
+  upsertYelpBusiness as dbUpsertYelpBusiness,
 } from './db.js';
 
 export const Schemas = {
@@ -82,6 +83,10 @@ export const Schemas = {
   listCandidates: z.object({
     minScore: z.number().optional(),
     verdict: z.string().optional(),
+  }),
+  attachYelp: z.object({
+    itemId: z.string(),
+    yelp: z.record(z.unknown()),
   }),
 };
 
@@ -289,5 +294,40 @@ export const listCandidatesOp: OperationHandler = async (args) => {
     return successResult({ candidates: results, count: results.length });
   } catch (error) {
     return errorResult('store.listCandidates', error);
+  }
+};
+
+export const attachYelp: OperationHandler = async (args) => {
+  try {
+    const itemId = args.itemId as string;
+    const y = args.yelp as Record<string, unknown>;
+    const yelpId = y.id as string | undefined;
+    if (!yelpId) {
+      throw new Error('attachYelp: yelp object is missing required `id` field');
+    }
+    const loc = (y.location ?? {}) as Record<string, unknown>;
+    const coords = (y.coordinates ?? {}) as Record<string, unknown>;
+    const displayAddress = Array.isArray(loc.display_address)
+      ? (loc.display_address as string[]).join(', ')
+      : undefined;
+
+    dbUpsertYelpBusiness({
+      yelpId,
+      itemId,
+      name: y.name as string | undefined,
+      rating: y.rating as number | undefined,
+      reviewCount: y.review_count as number | undefined,
+      price: y.price as string | undefined,
+      phone: y.phone as string | undefined,
+      displayAddress,
+      latitude: coords.latitude as number | undefined,
+      longitude: coords.longitude as number | undefined,
+      url: y.url as string | undefined,
+      categories: y.categories,
+      raw: y,
+    });
+    return successResult({ yelpId, itemId, attached: true });
+  } catch (error) {
+    return errorResult('store.attachYelp', error);
   }
 };
