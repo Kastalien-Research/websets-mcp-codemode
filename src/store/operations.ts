@@ -6,6 +6,7 @@ import { successResult, errorResult } from '../handlers/types.js';
 import {
   annotateItem,
   getItemWithAnnotations,
+  itemExists,
   getUninvestigatedItems,
   getUninvestigatedLean,
   countUninvestigatedItems,
@@ -304,6 +305,11 @@ export const attachYelp: OperationHandler = async (args) => {
     const yelpId = y.id as string | undefined;
     if (!yelpId) {
       throw new Error('attachYelp: yelp object is missing required `id` field');
+    }
+    if (!itemExists(itemId)) {
+      throw new Error(
+        `attachYelp: item '${itemId}' is not in the local store. Call store.syncItem first so the Yelp data has an item to join to.`,
+      );
     }
     const loc = (y.location ?? {}) as Record<string, unknown>;
     const coords = (y.coordinates ?? {}) as Record<string, unknown>;

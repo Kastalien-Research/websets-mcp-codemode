@@ -254,6 +254,11 @@ export function getItemWithAnnotations(itemId: string): {
   return { item, annotations };
 }
 
+export function itemExists(itemId: string): boolean {
+  const d = getDb();
+  return d.prepare('SELECT 1 FROM items WHERE id = ?').get(itemId) !== undefined;
+}
+
 export function annotateItem(
   itemId: string,
   type: string,

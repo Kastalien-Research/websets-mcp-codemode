@@ -40,4 +40,14 @@ describe('store.attachYelp', () => {
     const res = await attachYelp({ itemId: 'item1', yelp: { name: 'No Id' } }, {} as never);
     expect(res.isError).toBe(true);
   });
+
+  it('errors when the item does not exist (no orphan row written)', async () => {
+    const res = await attachYelp({ itemId: 'ghost-item', yelp: sampleBusiness }, {} as never);
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain('ghost-item');
+    const row = getDb()
+      .prepare('SELECT * FROM yelp_businesses WHERE yelp_id = ?')
+      .get('WavvLdfdP6g8aZTtbBQHTw');
+    expect(row).toBeUndefined();
+  });
 });
