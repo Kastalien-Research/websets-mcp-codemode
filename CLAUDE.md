@@ -35,6 +35,7 @@ npm run test:e2e
 - `src/store/db.ts` SQLite shadow store for Webset items + local annotations layer.
 - `src/store/operations.ts` exposes `store.annotate`, `store.getItem`, `store.listUninvestigated`, `store.query`.
 - `src/channel.ts` standalone stdio MCP channel bridge for Claude Code webhook notifications.
+- `src/lib/yelp.ts` Yelp Fusion HTTP client; `src/handlers/yelp.ts` exposes `yelp.*` business-discovery ops, persisted to the local store via `store.attachYelp` (`yelp_businesses` table).
 
 ### MCP Tools
 
