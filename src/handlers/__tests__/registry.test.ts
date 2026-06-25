@@ -14,6 +14,8 @@ import * as events from '../events.js';
 import * as tasks from '../tasks.js';
 import * as research from '../research.js';
 import * as exaSearch from '../exa.js';
+import { OPERATIONS, OPERATION_SCHEMAS } from '../../tools/operations.js';
+import * as yelp from '../yelp.js';
 
 describe('Handler modules export expected operations', () => {
   it('websets exports 9 handlers', () => {
@@ -123,5 +125,22 @@ describe('Handler modules export expected operations', () => {
       Object.keys(research).length +   // 5  (4 + 1)
       Object.keys(exaSearch).length;   // 5  (4 + 1)
     expect(handlerCount).toBe(71);
+  });
+});
+
+describe('yelp operations are registered', () => {
+  it('yelp module exports 5 handlers', () => {
+    expect(typeof yelp.search).toBe('function');
+    expect(typeof yelp.phoneSearch).toBe('function');
+    expect(typeof yelp.match).toBe('function');
+    expect(typeof yelp.details).toBe('function');
+    expect(typeof yelp.reviews).toBe('function');
+  });
+
+  it('registry exposes yelp.* and store.attachYelp with schemas', () => {
+    for (const name of ['yelp.search', 'yelp.phoneSearch', 'yelp.match', 'yelp.details', 'yelp.reviews', 'store.attachYelp']) {
+      expect(OPERATIONS[name], `missing OPERATIONS[${name}]`).toBeDefined();
+      expect(OPERATION_SCHEMAS[name], `missing OPERATION_SCHEMAS[${name}]`).toBeDefined();
+    }
   });
 });

@@ -89,6 +89,10 @@ function zodShapeToParams(schema: z.ZodTypeAny): ParamInfo[] {
   const params: ParamInfo[] = [];
 
   let inner = schema;
+  // .refine()/.superRefine() wrap the object in ZodEffects — unwrap to the shape.
+  while (inner instanceof z.ZodEffects) {
+    inner = (inner as any)._def.schema;
+  }
   if (inner instanceof z.ZodObject) {
     const shape = inner.shape as Record<string, z.ZodTypeAny>;
     for (const [key, val] of Object.entries(shape)) {
@@ -136,6 +140,10 @@ function zodShapeToParams(schema: z.ZodTypeAny): ParamInfo[] {
 
 function zodToJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
   // Simple recursive conversion — covers the shapes used in this project
+  // .refine()/.superRefine() wrap the schema in ZodEffects — unwrap to the inner type.
+  if (schema instanceof z.ZodEffects) {
+    return zodToJsonSchema((schema as any)._def.schema);
+  }
   if (schema instanceof z.ZodObject) {
     const shape = schema.shape as Record<string, z.ZodTypeAny>;
     const properties: Record<string, unknown> = {};

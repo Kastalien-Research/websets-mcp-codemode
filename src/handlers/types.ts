@@ -73,7 +73,10 @@ export function errorResult(operation: string, error: unknown, hints?: string): 
   // Append API-level prescriptive hints based on error patterns
   const apiHints: string[] = [];
   if (/401|403|Unauthorized|Forbidden/i.test(message)) {
-    apiHints.push('Check that EXA_API_KEY is set and valid.');
+    const keyHint = operation.startsWith('yelp.')
+      ? 'Check that YELP_API_KEY is set and valid.'
+      : 'Check that EXA_API_KEY is set and valid.';
+    apiHints.push(keyHint);
   }
   if (/404|[Nn]ot [Ff]ound/.test(message)) {
     apiHints.push('Resource not found. It may have been deleted. Use the corresponding .list operation to find valid IDs.');

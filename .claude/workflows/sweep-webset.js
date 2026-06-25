@@ -28,7 +28,7 @@ const LIMIT = A.limit ?? 50
 
 // The websets Code-Mode execute tool the agents drive. Agents call it with
 // callOperation('<op>', {...}). Kept in one place so it's easy to retarget.
-const EXECUTE_TOOL = 'the websets `execute` MCP tool (mcp__schwartz13-local__execute), calling callOperation(...) inside it'
+const EXECUTE_TOOL = 'the websets `execute` MCP tool (mcp__websets-codemode-local__execute), calling callOperation(...) inside it'
 
 // --- Schemas ----------------------------------------------------------------
 const DISCOVER_SCHEMA = {

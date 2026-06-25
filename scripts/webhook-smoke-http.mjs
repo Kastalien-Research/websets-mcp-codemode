@@ -3,7 +3,7 @@
 //
 // Assumes the server is reachable at http://localhost:7860 and that a known
 // secret has already been seeded into webhook_secrets (e.g. via
-// `docker compose exec schwartz13 node -e ...`).
+// `docker compose exec websets-codemode node -e ...`).
 
 import crypto from 'node:crypto';
 
