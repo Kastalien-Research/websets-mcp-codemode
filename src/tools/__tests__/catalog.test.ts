@@ -86,4 +86,25 @@ describe('searchCatalog', () => {
       expect(names.some((n: string) => n.includes('harvest'))).toBe(true);
     });
   });
+
+  describe('refined object schemas (ZodEffects)', () => {
+    it('exposes object params for yelp.search despite its .refine() wrapper', () => {
+      const result = searchCatalog('yelp.search', { detail: 'detailed' });
+      const entry = result.results.find((r: any) => r.name === 'yelp.search') as any;
+      expect(entry).toBeDefined();
+      const paramNames = entry.params.map((p: any) => p.name);
+      expect(paramNames).toContain('term');
+      expect(paramNames).toContain('location');
+      expect(paramNames).toContain('limit');
+    });
+
+    it('emits an object JSON schema for yelp.search at full detail', () => {
+      const result = searchCatalog('yelp.search', { detail: 'full' });
+      const entry = result.results.find((r: any) => r.name === 'yelp.search') as any;
+      expect(entry).toBeDefined();
+      expect(entry.schema.type).toBe('object');
+      expect(entry.schema.properties).toHaveProperty('term');
+      expect(entry.schema.properties).toHaveProperty('location');
+    });
+  });
 });
