@@ -20,6 +20,8 @@ deny = [
     (r"\bshutdown\b|\breboot\b", "system power commands are not allowed"),
     (r"(curl|wget).*\|\s*(bash|sh|zsh)", "network-piped shell execution"),
     (r"\bgit\s+push\b.*--force", "force-push is blocked"),
+    (r"\b(?:ba|z|da)?sh\s+-c\b.*\bgh\s+pr\s+create\b",
+     "shell-wrapped `gh pr create` hides the repo guard — run gh directly with -R <owner/repo>"),
 ]
 
 deny_determinism = [
@@ -58,8 +60,14 @@ wrappers = (
     rf"env(?:\s+{env_arg})*\s+|"
     rf"stdbuf(?:\s+{stdbuf_arg})*\s+)*"
 )
-for m in re.finditer(rf"(?:^|{boundary})\s*{wrappers}gh\s+pr\s+create\b", c_clean):
-    args = re.split(boundary, c_clean[m.end():], maxsplit=1)[0]
+for m in re.finditer(rf"(?:^|{boundary})\s*{wrappers}gh\b(?P<g>[^;&|(`\n]*?)\s+pr\s+create\b", c_clean):
+    # Scan the whole gh invocation for the repo flag: global flags that appear
+    # before the subcommand (`gh -R x pr create`) count too, so include the
+    # captured span before `pr create` along with the create args. `gh` stops
+    # parsing options at `--`, so a `--repo` after the terminator is a positional
+    # and does NOT satisfy the policy — truncate the span at `--` before checking.
+    args = (m.group("g") or "") + " " + re.split(boundary, c_clean[m.end():], maxsplit=1)[0]
+    args = re.split(r"(?:^|\s)--(?:\s|$)", args, maxsplit=1)[0]
     if not re.search(r"(^|\s)(-r|--repo)(\s|=)", args):
         block("`gh pr create` must set the target repo explicitly with -R <owner/repo> "
               "(gh defaults to the upstream parent, not the fork)")

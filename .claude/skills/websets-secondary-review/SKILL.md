@@ -22,9 +22,18 @@ behavior through `execute`, never curl (per CLAUDE.md).
 1. `status` to orient. Resolve the target Webset: accept a `webset_...` id directly, or match by
    name via `websets.getAll` (the `recent` query field is often empty — match on `searches[].query`
    or ask the user for the id / share the dashboard URL, whose last path segment is the id).
-2. `items.getAll({ websetId, maxItems })`. Pull `name`, `url`, `description`, `evaluations`, and
-   `enrichments` for every item. **Dedupe by person/entity** — the same entity often appears 2–3×
-   as separate `witem_` ids; a deletion must remove every copy.
+2. Load **every** item, not just the ones that passed. The projected `items.getAll` *response*
+   drops items whose built-in evaluations all failed (`satisfied !== "yes"`) — and those failed
+   records are exactly what a secondary review must scrutinize (false negatives to keep, junk to
+   delete). So mirror the full raw set into the local store and read it back from there:
+   - `items.getAll({ websetId, maxItems, ingest: true })` — `ingest: true` writes **every** raw
+     item (passing or not) into the local `items` table. The returned list is still only the
+     passing subset, so do **not** classify from it.
+   - `store.query({ sql: "SELECT id, name, url, enrichments, evaluations, raw FROM items WHERE webset_id = ?", params: [websetId] })`
+     to pull the complete set for classification.
+
+   **Dedupe by person/entity** — the same entity often appears 2–3× as separate `witem_` ids; a
+   deletion must remove every copy.
 
 ## Orient — decode the persona into disqualifiers
 Translate the use-case into explicit, checkable criteria. Example (adult male, non-military,
