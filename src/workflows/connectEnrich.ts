@@ -66,10 +66,10 @@ export async function runConnectEnrich(
   const estimatedCost = Math.round(perRowPrice * rows.length * 1000) / 1000;
 
   if (envCap && requestedMax > envCap) {
-    store.updateProgress(taskId, { step: 'capped', message: `CONNECT_MAX_ITEMS=${envCap} capped ${requestedMax} items` });
+    store.updateProgress(taskId, { step: 'capped', message: `CONNECT_MAX_ITEMS=${envCap} capped ${requestedMax} items`, completed: 2, total: 4 });
   }
   store.updateProgress(taskId, {
-    step: 'cost-estimate', message: `~$${estimatedCost} for ${rows.length} items × ${providers.length} provider(s) (Agent compute additional)`,
+    step: 'cost-estimate', message: `~$${estimatedCost} for ${rows.length} items × ${providers.length} provider(s) (Agent compute additional)`, completed: 2, total: 4,
   });
 
   if (dryRun) {
