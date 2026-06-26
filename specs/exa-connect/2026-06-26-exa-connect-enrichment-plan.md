@@ -510,10 +510,9 @@ Expected: FAIL (`../connect.js` does not exist).
 // providers and shape outputSchema without hallucinating IDs. Only doc-verified
 // IDs are marked `active`; "contact-us" providers have id: null, status: 'gated'.
 //
-// VERIFY-BEFORE-WRITING: financial_datasets, particle_news, affiliate_com IDs
-// were sourced from partner doc pages and must be re-confirmed against
-// https://exa.ai/docs before relying on them. fiber_ai, similarweb, baselayer,
-// harmonic are confirmed in the Connect overview/agent guide.
+// All self-serve IDs below were verified against the Exa Connect partner docs
+// on 2026-06-26 (https://exa.ai/docs/reference/agent-api/connect/<partner>.md).
+// Note: Affiliate.com's provider ID is `affiliate` (NOT `affiliate_com`).
 
 import { z } from 'zod';
 import type { OperationHandler } from './types.js';
@@ -535,9 +534,9 @@ export const PROVIDER_CATALOG: ProviderEntry[] = [
   { id: 'fiber_ai', label: 'Fiber.ai', category: 'firmographics', status: 'active', selfServe: true, pricePerCall: 0.02, inputKeys: ['domain', 'company_name', 'linkedin_url', 'email'], bestEntityTypes: ['company', 'person'], notes: 'B2B company + people database; headcount, funding stage, contacts.' },
   { id: 'similarweb', label: 'Similarweb', category: 'web-analytics', status: 'active', selfServe: true, pricePerCall: 0.03, inputKeys: ['domain'], bestEntityTypes: ['company'], notes: 'Traffic estimates, global rank, competitors for a domain.' },
   { id: 'baselayer', label: 'Baselayer', category: 'kyb', status: 'active', selfServe: true, pricePerCall: 0.022, inputKeys: ['company_name', 'state'], bestEntityTypes: ['company'], notes: 'US business verification: officers, registrations, risk signals.' },
-  { id: 'financial_datasets', label: 'Financial Datasets', category: 'finance-news', status: 'active', selfServe: true, pricePerCall: 0.01, inputKeys: ['ticker'], bestEntityTypes: ['company', 'article'], notes: 'Ticker-based news for US public companies. VERIFY ID.' },
-  { id: 'particle_news', label: 'Particle', category: 'media', status: 'active', selfServe: true, pricePerCall: 0.015, inputKeys: ['person_name', 'topic'], bestEntityTypes: ['person'], notes: 'Podcast transcript search with speaker attribution. VERIFY ID.' },
-  { id: 'affiliate_com', label: 'Affiliate.com', category: 'commerce', status: 'active', selfServe: true, pricePerCall: 0.015, inputKeys: ['product'], bestEntityTypes: [], notes: 'Product catalog search. Weak fit for entity enrichment. VERIFY ID.' },
+  { id: 'financial_datasets', label: 'Financial Datasets', category: 'finance-news', status: 'active', selfServe: true, pricePerCall: 0.01, inputKeys: ['ticker'], bestEntityTypes: ['company', 'article'], notes: 'Ticker-based news for US public companies.' },
+  { id: 'particle_news', label: 'Particle', category: 'media', status: 'active', selfServe: true, pricePerCall: 0.015, inputKeys: ['person_name', 'topic'], bestEntityTypes: ['person'], notes: 'Podcast transcript search with speaker attribution.' },
+  { id: 'affiliate', label: 'Affiliate.com', category: 'commerce', status: 'active', selfServe: true, pricePerCall: 0.015, inputKeys: ['product'], bestEntityTypes: [], notes: 'Product catalog search. Weak fit for entity enrichment.' },
   { id: 'jinko', label: 'Jinko', category: 'travel', status: 'active', selfServe: true, pricePerCall: 0.005, inputKeys: ['airport', 'budget'], bestEntityTypes: [], notes: 'Travel destination discovery. Weak fit for entity enrichment.' },
   { id: 'harmonic', label: 'Harmonic', category: 'startup-intel', status: 'gated', selfServe: false, pricePerCall: null, inputKeys: ['domain', 'company_name', 'founder'], bestEntityTypes: ['company', 'person'], notes: 'Startup signals: hiring, funding, leadership. ID published; requires activation.' },
   { id: null, label: 'Crunchbase', category: 'private-markets', status: 'gated', selfServe: false, pricePerCall: null, inputKeys: ['domain', 'company_name'], bestEntityTypes: ['company'], notes: 'Funding, investors, M&A, leadership. Contact Exa to set up.' },
@@ -906,7 +905,7 @@ Expected: `tsc` exits 0 (no type errors).
 Run: `npm test`
 Expected: PASS (all suites, including new Connect tests and `registry.test.ts`).
 
-- [ ] **Step 3: Verify the provider-ID gate** — confirm `financial_datasets`, `particle_news`, `affiliate_com` against `https://exa.ai/docs` (Connect partner pages). If any differs, fix the `id` in `src/handlers/connect.ts`; if it cannot be confirmed, set that entry to `status: 'gated'`. Re-run `npx vitest run src/handlers/__tests__/connect.test.ts`.
+- [ ] **Step 3: Provider-ID gate (already verified 2026-06-26)** — the self-serve IDs were confirmed against the Connect partner docs: `financial_datasets` ✓, `particle_news` ✓, and `affiliate` (corrected from `affiliate_com`) ✓. No action needed unless Exa changes them; if re-checking, fetch `https://exa.ai/docs/reference/agent-api/connect/<partner>.md` and compare the `dataSources` example.
 
 - [ ] **Step 4: Update CLAUDE.md** — under "Architecture Snapshot", add:
 

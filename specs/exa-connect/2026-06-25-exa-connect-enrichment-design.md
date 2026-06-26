@@ -240,7 +240,7 @@ Verified self-serve IDs (mark `active`):
 | `baselayer` | kyb | $0.022 | company_name + state | company |
 | `financial_datasets` | finance-news | $0.01 | ticker | company, article |
 | `particle_news` | media | $0.015 | person_name, topic | person |
-| `affiliate_com` | commerce | $0.015 | product | (weak fit) |
+| `affiliate` | commerce | $0.015 | product | (weak fit) |
 | `jinko` | travel | $0.005 | airport, budget | (weak fit) |
 | `harmonic` | startup-intel | n/a | domain, company_name, founder | company, person |
 
@@ -251,11 +251,12 @@ DefinitiveHealthcare, Faraday, OpenAlex, DataBento, Alpha Vantage, Traject Data.
 OpenAlex is flagged as the strongest `research_paper` enricher if/when its ID is
 available.
 
-**Verify-before-writing:** the IDs `financial_datasets`, `particle_news`, and
-`affiliate_com` were asserted by research from partner doc pages but MUST be
-re-confirmed against `https://exa.ai/docs` (the Connect partner pages) during
-implementation before being shipped as `active`. `fiber_ai`, `similarweb`,
-`baselayer`, `harmonic` are confirmed in the Connect overview/agent guide.
+**Provider IDs (verified 2026-06-26):** all self-serve IDs were confirmed
+against the Connect partner docs
+(`https://exa.ai/docs/reference/agent-api/connect/<partner>.md`):
+`fiber_ai`, `similarweb`, `baselayer`, `financial_datasets`, `particle_news`,
+`affiliate` (corrected from the initially-assumed `affiliate_com`), `jinko`.
+`harmonic` is confirmed in the agent guide but requires contact-us activation.
 
 ## 7. Error handling
 
