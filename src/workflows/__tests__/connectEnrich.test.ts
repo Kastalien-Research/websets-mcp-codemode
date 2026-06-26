@@ -4,18 +4,12 @@ import { getDb, closeDb } from '../../store/db.js';
 import type { TaskStore } from '../../lib/taskStore.js';
 
 function fakeStore(): TaskStore {
-  // FIX: added `get` because isCancelled() calls store.get() in the batch loop.
-  // Brief omitted it; without it the loop throws "store.get is not a function".
+  // `get` is required because isCancelled() calls store.get() in the batch loop.
   return { updateProgress: vi.fn(), get: vi.fn().mockReturnValue(undefined) } as unknown as TaskStore;
 }
 
-// Exa stub: websets.get returns entity type; agent runs go through agentRuns,
-// which we drive by stubbing global fetch (agentFetch uses fetch under the hood).
 function fakeExa() {
-  // FIX: added `listAll` async generator alongside `list`.
-  // collectItems() in helpers.ts uses exa.websets.items.listAll (not .list).
-  // Brief only provided `list`; without `listAll` both tests throw
-  // "listAll(...) is not a function or its return value is not async iterable".
+  // `listAll` async generator is required because collectItems() uses exa.websets.items.listAll.
   const items = [
     { id: 'item1', properties: { url: 'https://anthropic.com', company: { name: 'Anthropic' } } },
     { id: 'item2', properties: { url: 'https://openai.com', company: { name: 'OpenAI' } } },
@@ -33,8 +27,12 @@ function fakeExa() {
   } as any;
 }
 
+const COST_ZERO = { total: 0, agentCompute: 0, search: 0, emails: 0, phoneNumbers: 0 };
+
 describe('connect.enrich workflow', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let fetchSpy: any;
+
   beforeEach(() => {
     closeDb();
     getDb(':memory:');
@@ -52,25 +50,61 @@ describe('connect.enrich workflow', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('enriches items and persists Connect rows', async () => {
-    fetchSpy.mockResolvedValue(new Response(JSON.stringify({
+  it('enriches items end-to-end with async agent lifecycle', async () => {
+    // First fetch (POST create) returns a non-terminal running status.
+    const runningRun = {
+      id: 'agent_run_1', object: 'agent_run', status: 'running',
+      output: { structured: null, grounding: [] },
+      costDollars: COST_ZERO,
+    };
+    // Subsequent fetches (GET polls) return the terminal completed run with wrapped results.
+    const completedRun = {
       id: 'agent_run_1', object: 'agent_run', status: 'completed',
       output: {
-        structured: [
-          { _itemId: 'item1', monthlyVisits: 100 },
-          { _itemId: 'item2', monthlyVisits: 200 },
-        ],
+        structured: {
+          results: [
+            { _itemId: 'item1', monthlyVisits: 100 },
+            { _itemId: 'item2', monthlyVisits: 200 },
+          ],
+        },
+        grounding: [],
       },
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      costDollars: { total: 0.06, agentCompute: 0, search: 0, emails: 0, phoneNumbers: 0 },
+    };
+
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify(runningRun), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify(completedRun), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
 
     const res = await runConnectEnrich('task2', {
       websetId: 'ws1', providers: ['similarweb'], outputSchema: { type: 'object' },
-      maxItems: 10,
+      maxItems: 10, pollIntervalMs: 1,
     }, fakeExa(), fakeStore()) as any;
 
     expect(res.enriched).toBe(2);
     const rows = getDb().prepare('SELECT * FROM connect_enrichments').all() as any[];
     expect(rows.length).toBe(2);
-    expect(JSON.parse(rows.find((r) => r.item_id === 'item2').structured).monthlyVisits).toBe(200);
+    const item2Row = rows.find((r: any) => r.item_id === 'item2');
+    expect(JSON.parse(item2Row.structured).monthlyVisits).toBe(200);
+  });
+
+  it('throws before any fetch when a provider is not usable', async () => {
+    await expect(
+      runConnectEnrich('task3', {
+        websetId: 'ws1',
+        providers: ['harmonic'], // gated provider — not in active catalog
+        outputSchema: { type: 'object' },
+      }, fakeExa(), fakeStore()),
+    ).rejects.toThrow(/connect\.enrich: provider\(s\) not usable/);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

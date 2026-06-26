@@ -46,6 +46,19 @@ describe('connect_enrichments store', () => {
     const v = getDb().prepare('SELECT * FROM similarweb_v WHERE item_id = ?').get('item1') as any;
     expect(v.monthly_visits).toBe(999);
     expect(v.global_rank).toBe(50);
+    expect(v.bounce_rate).toBe(0.4);
+  });
+
+  it('firmographics_v projects employee_count and funding_stage from fiber_ai rows', () => {
+    upsertConnectEnrichment({
+      itemId: 'item1',
+      providers: ['fiber_ai'],
+      schemaHash: connectSchemaHash(['fiber_ai'], {}),
+      structured: { employee_count: 150, funding_stage: 'Series B', estimated_revenue: '10M' },
+    });
+    const v = getDb().prepare('SELECT * FROM firmographics_v WHERE item_id = ?').get('item1') as any;
+    expect(v.employee_count).toBe(150);
+    expect(v.funding_stage).toBe('Series B');
   });
 });
 
