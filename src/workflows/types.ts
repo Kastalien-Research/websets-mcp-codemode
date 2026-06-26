@@ -39,6 +39,25 @@ export function registerWorkflow(type: string, fn: WorkflowFunction, meta?: Work
 }
 
 /**
+ * True when dev/demo workflows (synthetic webhook injection / cron replay) are
+ * explicitly enabled via `WEBSETS_ENABLE_DEV_WORKFLOWS=1`. Read at registration
+ * time, so the flag must be set before the process imports the workflow modules.
+ */
+export function devWorkflowsEnabled(): boolean {
+  return process.env.WEBSETS_ENABLE_DEV_WORKFLOWS === '1';
+}
+
+/**
+ * Register a dev/demo workflow only when {@link devWorkflowsEnabled} is true.
+ * Keeps synthetic event-injection workflows out of the default (production)
+ * workflow surface, where they would otherwise be callable via `tasks.create`.
+ */
+export function registerDevWorkflow(type: string, fn: WorkflowFunction, meta?: WorkflowMeta): void {
+  if (!devWorkflowsEnabled()) return;
+  registerWorkflow(type, fn, meta);
+}
+
+/**
  * Register an Effect-typed workflow. The Effect body takes a single args
  * object and returns an Effect requiring the standard runtime services
  * (ExaClient, TaskProgress). At registration time, the Effect is wrapped

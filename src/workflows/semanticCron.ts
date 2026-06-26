@@ -1,6 +1,6 @@
 import type { Exa } from 'exa-js';
 import type { TaskStore } from '../lib/taskStore.js';
-import { registerWorkflow, type WorkflowMeta } from './types.js';
+import { registerWorkflow, registerDevWorkflow, type WorkflowMeta } from './types.js';
 import {
   createStepTracker,
   isCancelled,
@@ -1455,4 +1455,6 @@ const replayMeta: WorkflowMeta = {
   tags: ['monitoring', 'demo', 'replay', 'signal'],
 };
 
-registerWorkflow('semantic.cron.replay', semanticCronReplayWorkflow, replayMeta);
+// Dev/demo only: replays a persisted snapshot as a synthetic fire. Gated out of
+// the default (production) workflow surface — see registerDevWorkflow.
+registerDevWorkflow('semantic.cron.replay', semanticCronReplayWorkflow, replayMeta);
