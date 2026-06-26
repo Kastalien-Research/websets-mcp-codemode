@@ -21,7 +21,10 @@ export const Schemas = {
       data: z.array(z.record(z.string(), z.unknown())).optional(),
       exclusion: z.array(z.record(z.string(), z.unknown())).optional(),
     }).passthrough().optional(),
-    effort: z.enum(['low', 'medium', 'high', 'auto']).optional(),
+    dataSources: z.array(z.object({ provider: z.string() }).passthrough()).max(5).optional(),
+    systemPrompt: z.string().optional(),
+    previousRunId: z.string().optional(),
+    effort: z.enum(['low', 'medium', 'high', 'xhigh', 'auto']).optional(),
     stream: z.boolean().optional(),
   }),
   get: z.object({
@@ -145,6 +148,9 @@ export const create: OperationHandler = async (args, exa, ctx) => {
     const body: Record<string, unknown> = { query: args.query };
     if (args.outputSchema) body.outputSchema = args.outputSchema;
     if (args.input) body.input = args.input;
+    if (args.dataSources) body.dataSources = args.dataSources;
+    if (args.systemPrompt) body.systemPrompt = args.systemPrompt;
+    if (args.previousRunId) body.previousRunId = args.previousRunId;
     if (args.effort) body.effort = args.effort;
 
     if (args.stream === true) {
