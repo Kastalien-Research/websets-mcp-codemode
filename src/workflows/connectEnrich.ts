@@ -90,7 +90,9 @@ export async function runConnectEnrich(
     : undefined;
   const maxItems = envCap && envCap < requestedMax ? envCap : requestedMax;
   const effort = (args.effort as string) ?? 'low';
-  const batchSize = (args.batchSize as number) ?? 25;
+  // Clamp to >= 1: batchSize is the loop increment, so 0 or a negative value
+  // would stop `i` from advancing and re-create the same batch forever.
+  const batchSize = Math.max(1, (args.batchSize as number) ?? 25);
   const dryRun = (args.dryRun as boolean) ?? false;
   const pollIntervalMs = (args.pollIntervalMs as number) ?? DEFAULT_POLL_INTERVAL_MS;
   const maxWaitMs = (args.maxWaitMs as number) ?? DEFAULT_MAX_WAIT_MS;

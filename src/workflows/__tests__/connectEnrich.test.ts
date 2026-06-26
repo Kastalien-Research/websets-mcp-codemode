@@ -97,6 +97,33 @@ describe('connect.enrich workflow', () => {
     expect(JSON.parse(item2Row.structured).monthlyVisits).toBe(200);
   });
 
+  it('clamps batchSize to >= 1 so a 0 batchSize cannot loop forever', async () => {
+    // Without the Math.max(1, ...) clamp, batchSize:0 makes the for-loop
+    // increment by 0 — `i` never advances and the task re-creates batches
+    // forever. With the clamp it runs as single-item batches and completes.
+    const completedRun = {
+      id: 'agent_run_1', object: 'agent_run', status: 'completed',
+      output: {
+        structured: { results: [{ _itemId: 'item1', monthlyVisits: 100 }, { _itemId: 'item2', monthlyVisits: 200 }] },
+        grounding: [],
+      },
+      costDollars: { total: 0.06, agentCompute: 0, search: 0, emails: 0, phoneNumbers: 0 },
+    };
+    // Fresh Response per call — clamped batchSize:0 -> 1 means two single-item
+    // batches, i.e. two agent fetches; a shared Response body can only be read once.
+    fetchSpy.mockImplementation(async () =>
+      new Response(JSON.stringify(completedRun), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    const res = await runConnectEnrich('task4', {
+      websetId: 'ws1', providers: ['similarweb'], outputSchema: { type: 'object' },
+      maxItems: 10, batchSize: 0, pollIntervalMs: 1,
+    }, fakeExa(), fakeStore()) as any;
+
+    expect(res.enriched).toBe(2);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM connect_enrichments').get()).toEqual({ n: 2 });
+  });
+
   it('throws before any fetch when a provider is not usable', async () => {
     await expect(
       runConnectEnrich('task3', {
