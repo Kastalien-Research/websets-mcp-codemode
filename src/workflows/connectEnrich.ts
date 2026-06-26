@@ -1,7 +1,7 @@
 import type { Exa } from 'exa-js';
 import type { TaskStore } from '../lib/taskStore.js';
 import { registerWorkflow, type WorkflowMeta } from './types.js';
-import { createStepTracker, isCancelled, collectItems, withSummary } from './helpers.js';
+import { isCancelled, collectItems, withSummary } from './helpers.js';
 import { create as agentCreate } from '../handlers/agentRuns.js';
 import { upsertItem, upsertConnectEnrichment, connectSchemaHash } from '../store/db.js';
 import { PROVIDER_CATALOG } from '../handlers/connect.js';
@@ -38,7 +38,6 @@ export async function runConnectEnrich(
   exa: Exa,
   store: TaskStore,
 ): Promise<unknown> {
-  const tracker = createStepTracker();
   const websetId = args.websetId as string;
   if (!websetId) throw new Error('websetId is required');
   const providers = args.providers as string[];
@@ -125,7 +124,8 @@ export async function runConnectEnrich(
         });
         enriched += 1;
       }
-    } catch {
+    } catch (err) {
+      console.warn(`[connect.enrich] batch starting at index ${i} failed; counting ${batch.length} item(s) as failed`, err);
       failed += batch.length;
     }
   }
