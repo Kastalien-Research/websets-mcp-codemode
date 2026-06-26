@@ -18,6 +18,7 @@ import * as exaSearch from '../handlers/exa.js';
 import * as github from '../handlers/github.js';
 import * as teams from '../handlers/teams.js';
 import * as yelp from '../handlers/yelp.js';
+import * as connect from '../handlers/connect.js';
 import * as store from '../store/operations.js';
 import * as notebook from '../handlers/notebook.js';
 import { applyCompatCoercions, type AppliedCoercion, type CompatMode } from './coercion.js';
@@ -128,6 +129,7 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'store.listCandidates': { handler: store.listCandidatesOp, summary: 'List candidate companies by score/verdict' },
   'store.attachYelp': { handler: store.attachYelp, summary: 'Attach a Yelp business to a local item (structured, queryable)' },
   'store.attachConnect': { handler: store.attachConnect, summary: 'Attach an Exa Connect enrichment result to a local item (structured, queryable)' },
+  'connect.providers': { handler: connect.providers, summary: 'List Exa Connect data partners (IDs, prices, input keys, best entity types). Use before building a Connect run.' },
   'yelp.search': { handler: yelp.search, summary: 'Search Yelp businesses by term and location (rating, reviews, price)' },
   'yelp.phoneSearch': { handler: yelp.phoneSearch, summary: 'Find Yelp businesses by phone number' },
   'yelp.match': { handler: yelp.match, summary: 'Match a business on Yelp by name and address' },
@@ -235,6 +237,7 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'store.listCandidates': store.Schemas.listCandidates,
   'store.attachYelp': store.Schemas.attachYelp,
   'store.attachConnect': store.Schemas.attachConnect,
+  'connect.providers': connect.Schemas.providers,
   'yelp.search': yelp.Schemas.search,
   'yelp.phoneSearch': yelp.Schemas.phoneSearch,
   'yelp.match': yelp.Schemas.match,
