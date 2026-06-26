@@ -129,7 +129,7 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'store.listCandidates': { handler: store.listCandidatesOp, summary: 'List candidate companies by score/verdict' },
   'store.attachYelp': { handler: store.attachYelp, summary: 'Attach a Yelp business to a local item (structured, queryable)' },
   'store.attachConnect': { handler: store.attachConnect, summary: 'Attach an Exa Connect enrichment result to a local item (structured, queryable)' },
-  'connect.providers': { handler: connect.providers, summary: 'List Exa Connect data partners (IDs, prices, input keys, best entity types). Use before building a Connect run.' },
+  'connect.providers': { handler: connect.providers, summary: 'List Exa Connect data partners (IDs, prices, input keys, best entity types). Returns a curated in-repo catalog (source: curated-static), not this account\'s live entitlements; "gated" means requires Exa activation, not an account-level signal. Use before building a Connect run.' },
   'yelp.search': { handler: yelp.search, summary: 'Search Yelp businesses by term and location (rating, reviews, price)' },
   'yelp.phoneSearch': { handler: yelp.phoneSearch, summary: 'Find Yelp businesses by phone number' },
   'yelp.match': { handler: yelp.match, summary: 'Match a business on Yelp by name and address' },

@@ -8,6 +8,15 @@ describe('connect.providers', () => {
     expect(out.count).toBe(PROVIDER_CATALOG.length);
   });
 
+  it('self-identifies as a curated static catalog, not live entitlements', async () => {
+    const res = await providers({}, {} as never);
+    const out = JSON.parse(res.content[0].text);
+    expect(out.source).toBe('curated-static');
+    expect(out.verifiedAt).toBe('2026-06-26');
+    expect(typeof out.note).toBe('string');
+    expect(out.note.toLowerCase()).toContain('entitlement');
+  });
+
   it('every active provider has a non-null id; gated providers without a public id are null', async () => {
     for (const p of PROVIDER_CATALOG) {
       if (p.status === 'active') expect(typeof p.id).toBe('string');
