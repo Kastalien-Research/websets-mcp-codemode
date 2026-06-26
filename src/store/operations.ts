@@ -19,6 +19,8 @@ import {
   getCompany as dbGetCompany,
   listCandidates as dbListCandidates,
   upsertYelpBusiness as dbUpsertYelpBusiness,
+  upsertConnectEnrichment as dbUpsertConnectEnrichment,
+  connectSchemaHash,
 } from './db.js';
 
 export const Schemas = {
@@ -91,6 +93,17 @@ export const Schemas = {
   attachYelp: z.object({
     itemId: z.string(),
     yelp: z.record(z.unknown()),
+  }),
+  attachConnect: z.object({
+    itemId: z.string(),
+    providers: z.array(z.string()).min(1),
+    structured: z.record(z.string(), z.unknown()),
+    query: z.string().optional(),
+    grounding: z.unknown().optional(),
+    cost: z.number().optional(),
+    runId: z.string().optional(),
+    effort: z.string().optional(),
+    outputSchema: z.record(z.string(), z.unknown()).optional(),
   }),
 };
 
@@ -338,5 +351,34 @@ export const attachYelp: OperationHandler = async (args) => {
     return successResult({ yelpId, itemId, attached: true });
   } catch (error) {
     return errorResult('store.attachYelp', error);
+  }
+};
+
+export const attachConnect: OperationHandler = async (args) => {
+  try {
+    const itemId = args.itemId as string;
+    const providers = args.providers as string[];
+    const structured = args.structured as Record<string, unknown>;
+    if (!itemExists(itemId)) {
+      throw new Error(
+        `attachConnect: item '${itemId}' is not in the local store. Call store.syncItem first so the Connect data has an item to join to.`,
+      );
+    }
+    const schemaBasis = (args.outputSchema as unknown) ?? Object.keys(structured).sort();
+    const schemaHash = connectSchemaHash(providers, schemaBasis);
+    dbUpsertConnectEnrichment({
+      itemId,
+      providers,
+      query: args.query as string | undefined,
+      schemaHash,
+      structured,
+      grounding: args.grounding,
+      costDollars: args.cost as number | undefined,
+      effort: args.effort as string | undefined,
+      runId: args.runId as string | undefined,
+    });
+    return successResult({ itemId, schemaHash, attached: true });
+  } catch (error) {
+    return errorResult('store.attachConnect', error);
   }
 };

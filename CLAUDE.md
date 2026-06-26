@@ -36,6 +36,7 @@ npm run test:e2e
 - `src/store/operations.ts` exposes `store.annotate`, `store.getItem`, `store.listUninvestigated`, `store.query`.
 - `src/channel.ts` standalone stdio MCP channel bridge for Claude Code webhook notifications.
 - `src/lib/yelp.ts` Yelp Fusion HTTP client; `src/handlers/yelp.ts` exposes `yelp.*` business-discovery ops, persisted to the local store via `store.attachYelp` (`yelp_businesses` table).
+- `src/handlers/connect.ts` exposes `connect.providers` (Exa Connect partner catalog). Connect itself is the `dataSources` param on `agentRuns.create`; `src/workflows/connectEnrich.ts` batch-enriches a webset and persists results via `store.attachConnect` (`connect_enrichments` table + `similarweb_v`/`firmographics_v` views).
 
 ### MCP Tools
 

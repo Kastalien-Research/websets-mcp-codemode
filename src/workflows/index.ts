@@ -15,3 +15,4 @@ import './verifyEnrichments.js';
 import './verifyItem.js';
 import './thesisInvestigate.js';
 import './webhookInject.js';
+import './connectEnrich.js';

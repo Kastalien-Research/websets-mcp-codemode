@@ -299,3 +299,34 @@ describe('agentRuns.list', () => {
     expect(url).toContain('limit=25');
   });
 });
+
+describe('agentRuns.create — Connect dataSources', () => {
+  it('forwards dataSources, systemPrompt, previousRunId, and xhigh effort in the body', async () => {
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ id: 'agent_run_x', object: 'agent_run', status: 'running' }));
+
+    await agentRuns.create(
+      {
+        query: 'Profile Anthropic',
+        dataSources: [{ provider: 'similarweb' }, { provider: 'fiber_ai' }],
+        systemPrompt: 'Be terse',
+        previousRunId: 'agent_run_prev',
+        effort: 'xhigh',
+      },
+      fakeExa(),
+    );
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
+    expect(body.dataSources).toEqual([{ provider: 'similarweb' }, { provider: 'fiber_ai' }]);
+    expect(body.systemPrompt).toBe('Be terse');
+    expect(body.previousRunId).toBe('agent_run_prev');
+    expect(body.effort).toBe('xhigh');
+  });
+
+  it('rejects more than 5 dataSources via schema', () => {
+    const parsed = agentRuns.Schemas.create.safeParse({
+      query: 'x',
+      dataSources: [1, 2, 3, 4, 5, 6].map((n) => ({ provider: `p${n}` })),
+    });
+    expect(parsed.success).toBe(false);
+  });
+});

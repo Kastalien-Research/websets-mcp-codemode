@@ -4,6 +4,7 @@
 import Database from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 
 let db: Database.Database | null = null;
 
@@ -155,6 +156,40 @@ function initSchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_yelp_item ON yelp_businesses(item_id);
     CREATE INDEX IF NOT EXISTS idx_yelp_rating ON yelp_businesses(rating);
+
+    CREATE TABLE IF NOT EXISTS connect_enrichments (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id      TEXT NOT NULL REFERENCES items(id),
+      providers    JSON NOT NULL,
+      query        TEXT,
+      schema_hash  TEXT NOT NULL,
+      structured   JSON,
+      grounding    JSON,
+      cost_dollars REAL,
+      effort       TEXT,
+      run_id       TEXT,
+      fetched_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(item_id, schema_hash)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_connect_item ON connect_enrichments(item_id);
+    CREATE INDEX IF NOT EXISTS idx_connect_run ON connect_enrichments(run_id);
+
+    CREATE VIEW IF NOT EXISTS similarweb_v AS
+      SELECT item_id, run_id,
+        json_extract(structured,'$.monthlyVisits') AS monthly_visits,
+        json_extract(structured,'$.globalRank')    AS global_rank,
+        json_extract(structured,'$.bounceRate')    AS bounce_rate,
+        cost_dollars, fetched_at
+      FROM connect_enrichments WHERE providers LIKE '%similarweb%';
+
+    CREATE VIEW IF NOT EXISTS firmographics_v AS
+      SELECT item_id, run_id,
+        json_extract(structured,'$.employee_count')    AS employee_count,
+        json_extract(structured,'$.funding_stage')     AS funding_stage,
+        json_extract(structured,'$.estimated_revenue') AS estimated_revenue,
+        cost_dollars, fetched_at
+      FROM connect_enrichments WHERE providers LIKE '%fiber_ai%';
   `);
 }
 
@@ -721,5 +756,61 @@ export function upsertYelpBusiness(rec: YelpBusinessRecord): void {
     url: rec.url ?? null,
     categories: rec.categories != null ? JSON.stringify(rec.categories) : null,
     raw: rec.raw != null ? JSON.stringify(rec.raw) : null,
+  });
+}
+
+// --- Connect enrichment operations ---
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`;
+}
+
+export function connectSchemaHash(providers: string[], schema: unknown): string {
+  const payload = stableStringify({ providers: [...providers].sort(), schema });
+  return createHash('sha256').update(payload).digest('hex');
+}
+
+export interface ConnectEnrichmentRecord {
+  itemId: string;
+  providers: string[];
+  query?: string;
+  schemaHash: string;
+  structured?: unknown;
+  grounding?: unknown;
+  costDollars?: number;
+  effort?: string;
+  runId?: string;
+}
+
+export function upsertConnectEnrichment(rec: ConnectEnrichmentRecord): void {
+  const d = getDb();
+  d.prepare(`
+    INSERT INTO connect_enrichments
+      (item_id, providers, query, schema_hash, structured, grounding, cost_dollars, effort, run_id, fetched_at)
+    VALUES
+      (@itemId, @providers, @query, @schemaHash, @structured, @grounding, @costDollars, @effort, @runId, datetime('now'))
+    ON CONFLICT(item_id, schema_hash) DO UPDATE SET
+      providers = excluded.providers,
+      query = excluded.query,
+      structured = excluded.structured,
+      grounding = excluded.grounding,
+      cost_dollars = excluded.cost_dollars,
+      effort = excluded.effort,
+      run_id = excluded.run_id,
+      fetched_at = datetime('now')
+  `).run({
+    itemId: rec.itemId,
+    providers: JSON.stringify(rec.providers),
+    query: rec.query ?? null,
+    schemaHash: rec.schemaHash,
+    structured: rec.structured != null ? JSON.stringify(rec.structured) : null,
+    grounding: rec.grounding != null ? JSON.stringify(rec.grounding) : null,
+    costDollars: rec.costDollars ?? null,
+    effort: rec.effort ?? null,
+    runId: rec.runId ?? null,
   });
 }
