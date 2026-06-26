@@ -34,7 +34,10 @@ export const Schemas = {
     name: z.string().optional(),
     url: z.string().optional(),
     entityType: z.string().optional(),
-    enrichments: z.record(z.unknown()).optional(),
+    // Raw Exa items emit enrichments as a record; items.getAll projects them as
+    // an array of { description, format, result }. Accept both so projected
+    // items can be mirrored (db stores it as JSON either way).
+    enrichments: z.union([z.record(z.unknown()), z.array(z.unknown())]).optional(),
     evaluations: z.array(z.unknown()).optional(),
     raw: z.unknown().optional(),
     createdAt: z.string().optional(),
