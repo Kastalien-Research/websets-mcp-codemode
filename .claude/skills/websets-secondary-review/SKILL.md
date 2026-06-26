@@ -9,7 +9,7 @@ description: >
   own built-in evaluations are unreliable — this re-checks them independently.
 argument-hint: [websetId or webset name] + [target persona / use-case]
 user-invocable: true
-allowed-tools: Read, mcp__schwartz13-local__status, mcp__schwartz13-local__search, mcp__schwartz13-local__execute, mcp__exa__web_search_exa, WebFetch
+allowed-tools: Read, mcp__websets-codemode-local__status, mcp__websets-codemode-local__search, mcp__websets-codemode-local__execute, mcp__exa__web_search_exa, WebFetch
 ---
 
 # Websets Secondary Review

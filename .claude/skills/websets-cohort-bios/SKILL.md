@@ -9,7 +9,7 @@ description: >
   [[deep-research-item]] instead; this is the parallel, many-entities harness.
 argument-hint: [list of entities OR websetId + which items] 
 user-invocable: true
-allowed-tools: Task, Read, mcp__schwartz13-local__execute, mcp__schwartz13-local__search, mcp__exa__web_search_exa
+allowed-tools: Task, Read, mcp__websets-codemode-local__execute, mcp__websets-codemode-local__search, mcp__exa__web_search_exa
 ---
 
 # Websets Cohort Bios

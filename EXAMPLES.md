@@ -1,4 +1,4 @@
-# schwartz13 Examples
+# websets-codemode Examples
 
 This server is Docker-first and exposes a single HTTP MCP endpoint at `/mcp`.
 All examples below assume the server is already running.
@@ -14,7 +14,7 @@ EXA_API_KEY=your-key docker compose up --build
 ```json
 {
   "mcpServers": {
-    "schwartz13": {
+    "websets-codemode": {
       "type": "http",
       "url": "http://localhost:7860/mcp"
     }

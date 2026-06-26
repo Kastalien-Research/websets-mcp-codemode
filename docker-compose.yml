@@ -1,5 +1,5 @@
 services:
-  schwartz13:
+  websets-codemode:
     build: .
     ports:
       - "${PORT:-7860}:7860"

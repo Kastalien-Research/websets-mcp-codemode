@@ -1,5 +1,5 @@
 {
-  "name": "schwartz13",
+  "name": "websets-codemode",
   "version": "1.0.0",
   "private": true,
   "description": "Docker-first MCP server for Exa Websets API. Create, manage, and enrich collections of web entities (companies, people, papers) with automated search, enrichments, and monitoring capabilities.",

@@ -93,7 +93,7 @@ assert dep-install path. Integration: `POST /run` against a stub `WEBSETS_MCP_UR
      the cell using glassBook's `@ai-sdk/anthropic` directly. Recommend a websets op so cells stay
      uniform (everything via `callOperation`). Resolve before Phase 2.
 6. **Compose wiring** (`docker-compose.yml`): add a `glassbook-runner` service; set
-   `GLASSBOOK_RUNNER_URL` here and `WEBSETS_MCP_URL=http://schwartz13:7860/mcp` there (compose net).
+   `GLASSBOOK_RUNNER_URL` here and `WEBSETS_MCP_URL=http://websets-codemode:7860/mcp` there (compose net).
 
 ## Phasing (de-risk the new execution path before the epistemics)
 
