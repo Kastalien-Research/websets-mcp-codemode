@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getDb, closeDb, upsertItem, upsertConnectEnrichment, connectSchemaHash } from '../db.js';
+import { attachConnect } from '../operations.js';
 
 describe('connect_enrichments store', () => {
   beforeEach(() => {
@@ -45,5 +46,35 @@ describe('connect_enrichments store', () => {
     const v = getDb().prepare('SELECT * FROM similarweb_v WHERE item_id = ?').get('item1') as any;
     expect(v.monthly_visits).toBe(999);
     expect(v.global_rank).toBe(50);
+  });
+});
+
+describe('store.attachConnect', () => {
+  beforeEach(() => {
+    closeDb();
+    getDb(':memory:');
+    upsertItem({ id: 'item1', websetId: 'ws1', name: 'Anthropic' });
+  });
+  afterEach(() => closeDb());
+
+  it('persists structured output linked to the item', async () => {
+    const res = await attachConnect({
+      itemId: 'item1', providers: ['similarweb'], structured: { monthlyVisits: 1500000 },
+      outputSchema: { type: 'object' }, cost: 0.03, runId: 'r1',
+    }, {} as never);
+    expect(res.isError).toBeFalsy();
+    expect(JSON.parse(res.content[0].text)).toMatchObject({ attached: true, itemId: 'item1' });
+    const row = getDb().prepare('SELECT * FROM connect_enrichments WHERE item_id = ?').get('item1') as any;
+    expect(JSON.parse(row.structured).monthlyVisits).toBe(1500000);
+  });
+
+  it('rejects an unknown itemId (no orphan row)', async () => {
+    const res = await attachConnect({
+      itemId: 'ghost', providers: ['similarweb'], structured: { x: 1 },
+    }, {} as never);
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain('ghost');
+    const row = getDb().prepare('SELECT * FROM connect_enrichments').get();
+    expect(row).toBeUndefined();
   });
 });
