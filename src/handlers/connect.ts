@@ -50,12 +50,26 @@ export const Schemas = {
   }),
 };
 
+const CATALOG_NOTE =
+  'Curated in-repo catalog of Exa Connect partners — not this account\'s live '
+  + 'entitlements. `status` reflects general self-serve availability: "active" = '
+  + 'callable self-serve via the dataSources param; "gated" = requires Exa '
+  + 'activation. "gated" is not an account-level entitlement signal, and "active" '
+  + 'does not imply this account is provisioned.';
+const CATALOG_VERIFIED_AT = '2026-06-26';
+
 export const providers: OperationHandler = async (args) => {
   try {
     let list = PROVIDER_CATALOG;
     if (args.status) list = list.filter((p) => p.status === args.status);
     if (args.entityType) list = list.filter((p) => p.bestEntityTypes.includes(args.entityType as string));
-    return successResult({ count: list.length, providers: list });
+    return successResult({
+      source: 'curated-static',
+      verifiedAt: CATALOG_VERIFIED_AT,
+      note: CATALOG_NOTE,
+      count: list.length,
+      providers: list,
+    });
   } catch (error) {
     return errorResult('connect.providers', error);
   }
