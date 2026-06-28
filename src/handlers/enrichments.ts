@@ -110,9 +110,12 @@ export const update: OperationHandler = async (args, exa) => {
     if (args.options) params.options = args.options;
     if (args.metadata !== undefined) params.metadata = args.metadata;
 
-    // enrichments.update returns void
+    // The SDK update() returns void; fetch the enrichment afterward so we return
+    // confirmed state (consistent with create/get/cancel/delete) rather than a
+    // locally synthesized success shape.
     await exa.websets.enrichments.update(websetId, enrichmentId, params as any);
-    return successResult({ success: true, enrichmentId });
+    const response = await exa.websets.enrichments.get(websetId, enrichmentId);
+    return successResult(projectEnrichment(response as unknown as Record<string, unknown>));
   } catch (error) {
     return errorResult('enrichments.update', error);
   }

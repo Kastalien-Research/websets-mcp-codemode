@@ -58,7 +58,7 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'enrichments.create': { handler: enrichments.create, summary: 'Create an enrichment' },
   'enrichments.get': { handler: enrichments.get, summary: 'Get enrichment status' },
   'enrichments.cancel': { handler: enrichments.cancel, summary: 'Cancel an enrichment' },
-  'enrichments.update': { handler: enrichments.update, summary: 'Update an enrichment' },
+  'enrichments.update': { handler: enrichments.update, summary: 'Update an enrichment; returns the refetched enrichment' },
   'enrichments.delete': { handler: enrichments.del, summary: 'Delete an enrichment' },
   'monitors.create': { handler: monitors.create, summary: 'Create a monitor' },
   'monitors.get': { handler: monitors.get, summary: 'Get a monitor' },

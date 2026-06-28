@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { create } from '../enrichments.js';
+import { create, update } from '../enrichments.js';
 import type { Exa } from 'exa-js';
 
 function mockExa(): Exa {
@@ -69,5 +69,51 @@ describe('enrichments.create validation', () => {
       exa,
     );
     expect(result.isError).toBeUndefined();
+  });
+});
+
+describe('enrichments.update', () => {
+  function mockUpdateExa() {
+    const updateFn = vi.fn().mockResolvedValue(undefined);
+    const getFn = vi.fn().mockResolvedValue({
+      id: 'enr_9',
+      status: 'completed',
+      description: 'Founded year (updated)',
+    });
+    const exa = {
+      websets: { enrichments: { update: updateFn, get: getFn } },
+    } as unknown as Exa;
+    return { exa, updateFn, getFn };
+  }
+
+  it('returns the fetched enrichment after a successful update', async () => {
+    const { exa, updateFn, getFn } = mockUpdateExa();
+    const result = await update(
+      { websetId: 'ws_1', enrichmentId: 'enr_9', description: 'Founded year (updated)' },
+      exa,
+    );
+
+    expect(result.isError).toBeUndefined();
+    // confirmed state is fetched, not synthesized
+    expect(updateFn).toHaveBeenCalledWith('ws_1', 'enr_9', { description: 'Founded year (updated)' });
+    expect(getFn).toHaveBeenCalledWith('ws_1', 'enr_9');
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.id).toBe('enr_9');
+    expect(parsed.status).toBe('completed');
+    expect(parsed.success).toBeUndefined();
+  });
+
+  it('surfaces an error result when the update call throws', async () => {
+    const exa = {
+      websets: {
+        enrichments: {
+          update: vi.fn().mockRejectedValue(new Error('boom')),
+          get: vi.fn(),
+        },
+      },
+    } as unknown as Exa;
+    const result = await update({ websetId: 'ws_1', enrichmentId: 'enr_9' }, exa);
+    expect(result.isError).toBe(true);
   });
 });
