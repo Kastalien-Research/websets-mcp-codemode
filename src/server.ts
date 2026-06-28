@@ -58,6 +58,10 @@ export function createServer(config: ServerConfig): ServerInstance {
   // Webhook receiver for Exa webhook events + SSE stream for channel bridges
   app.use(createWebhookRouter(config.webhookSecret));
 
+  // Production boot is guarded in index.ts (resolveExaApiKey fails fast on a
+  // missing EXA_API_KEY). An empty key only reaches here via explicit keyless
+  // boot (ALLOW_NO_EXA_KEY=1) or tests; the placeholder keeps `new Exa()` from
+  // throwing in those cases — live Exa calls will still fail.
   const exa = new Exa(config.exaApiKey || 'dummy-key-for-testing');
 
   // AgX v2: resolve enrichmentId→description from the webset definition so the
