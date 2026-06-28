@@ -45,8 +45,16 @@ describe('registerDevWorkflow gating', () => {
 
 describe('production workflow surface (flag unset by default)', () => {
   it('registers real workflows but gates the dev/demo ones', async () => {
-    // The test process does not set WEBSETS_ENABLE_DEV_WORKFLOWS.
-    await import('../index.js');
+    const original = process.env.WEBSETS_ENABLE_DEV_WORKFLOWS;
+
+    try {
+      delete process.env.WEBSETS_ENABLE_DEV_WORKFLOWS;
+      await import('../index.js');
+    } finally {
+      if (original === undefined) delete process.env.WEBSETS_ENABLE_DEV_WORKFLOWS;
+      else process.env.WEBSETS_ENABLE_DEV_WORKFLOWS = original;
+    }
+
     expect(workflowRegistry.has('semantic.cron')).toBe(true);
     expect(workflowRegistry.has('webhook.inject')).toBe(false);
     expect(workflowRegistry.has('semantic.cron.replay')).toBe(false);
