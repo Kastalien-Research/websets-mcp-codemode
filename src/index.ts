@@ -32,7 +32,7 @@ if (devWorkflowsEnabled()) {
 }
 
 const { app } = createServer({
-  exaApiKey: process.env.EXA_API_KEY || '',
+  exaApiKey,
   defaultCompatMode,
   webhookSecret: process.env.EXA_WEBHOOK_SECRET,
 });
