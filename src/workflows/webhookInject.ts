@@ -11,7 +11,7 @@
 
 import type { Exa } from 'exa-js';
 import type { TaskStore } from '../lib/taskStore.js';
-import { registerWorkflow, type WorkflowMeta } from './types.js';
+import { registerDevWorkflow, type WorkflowMeta } from './types.js';
 import { WorkflowError, withSummary } from './helpers.js';
 import { webhookEventBus, createEvent } from '../webhooks/eventBus.js';
 
@@ -70,4 +70,4 @@ const meta: WorkflowMeta = {
   tags: ['dev', 'test', 'webhook', 'inject', 'demo'],
 };
 
-registerWorkflow('webhook.inject', webhookInjectWorkflow, meta);
+registerDevWorkflow('webhook.inject', webhookInjectWorkflow, meta);
