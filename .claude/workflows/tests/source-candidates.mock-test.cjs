@@ -1,14 +1,25 @@
 // Mock harness for .claude/workflows/source-candidates.js — exercises the
-// deterministic script logic behind the Greptile/Bugbot review fixes without
-// any real agents. Run from repo root:
+// deterministic script logic behind the Greptile/Bugbot/Codex review fixes
+// without any real agents. Write/assemble mocks report measurements from the
+// REAL `cksum` binary over the exact prompt content, so the script's pure-JS
+// POSIX cksum implementation is validated against the actual tool (including
+// multi-byte UTF-8 via a unicode candidate name). Run from repo root:
 //   node .claude/workflows/tests/source-candidates.mock-test.cjs
 const fs = require('fs')
+const { spawnSync } = require('child_process')
 
 const SRC = fs
   .readFileSync('.claude/workflows/source-candidates.js', 'utf8')
   .replace('export const meta', 'const meta')
 
 const AsyncFunction = async function () {}.constructor
+
+function realCksum(content) {
+  const r = spawnSync('cksum', [], { input: content })
+  if (r.status !== 0) throw new Error(`cksum failed: ${r.stderr}`)
+  const [crc, bytes] = r.stdout.toString().trim().split(/\s+/).map(Number)
+  return { crc, bytes }
+}
 
 function makePipeline() {
   return async (items, ...stages) => {
@@ -35,6 +46,7 @@ function makeParallel() {
 
 // Configurable agent mock, dispatching on opts.label.
 function makeAgent(cfg, calls) {
+  const written = {} // part filename → content, for faithful assemble emulation
   return async (prompt, opts = {}) => {
     const label = opts.label ?? '(none)'
     calls.push(label)
@@ -64,12 +76,19 @@ function makeAgent(cfg, calls) {
     }
     if (label.startsWith('write:')) {
       const content = /<<<PART\n([\s\S]*?)PART\n/.exec(prompt)?.[1] ?? ''
-      const lines = content.split('\n').filter((l) => l.length > 0).length
       const partName = label.replace(/^write:/, '').replace(/:retry\d+$/, '')
-      if (cfg.corruptPart && partName === cfg.corruptPart) return { linesWritten: lines - 1, tagMatches: 0 }
-      return { linesWritten: lines, tagMatches: 0 }
+      written[partName] = content
+      const m = realCksum(content)
+      if (cfg.corruptPart && partName === cfg.corruptPart) return { cksumCrc: m.crc + 1, bytes: m.bytes }
+      return { cksumCrc: m.crc, bytes: m.bytes }
     }
-    if (label === 'assemble-csv') return { linesWritten: cfg.expectedTotalLines, tagMatches: 0 }
+    if (label === 'assemble-csv') {
+      const concat = (prefix) =>
+        Object.keys(written).filter((k) => k.startsWith(prefix)).sort().map((k) => written[k]).join('')
+      const v = realCksum(concat('v-'))
+      const r = realCksum(concat('r-'))
+      return { csvCrc: v.crc, csvBytes: v.bytes, rejectedCrc: r.crc, rejectedBytes: r.bytes }
+    }
     if (label === 'report') return 'mock report'
     throw new Error(`mock agent: unhandled label ${label}`)
   }
@@ -93,6 +112,7 @@ const ITEMS = [
   { itemId: 'w1', name: 'Alice', url: 'https://x/a' },
   { itemId: 'w2', name: 'Bob', url: 'https://x/b' },
   { itemId: 'w3', name: 'Cara', url: 'https://x/c' },
+  { itemId: 'w4', name: 'Miklós Horváth', url: 'https://x/d' }, // multi-byte UTF-8 exercises the JS cksum
 ]
 const COLLECT_OK = { websetId: 'webset_test', criteria: ['C0 pub or OSS'], enrichmentColumns: ['E0 email'], items: ITEMS, truncated: false }
 
@@ -107,15 +127,15 @@ function check(desc, cond) {
   {
     const { result, calls } = await run(
       { websetId: 'webset_test', outputCsv: 'exports/x"; rm -rf ~; echo ".csv' },
-      { collect: COLLECT_OK, expectedTotalLines: 0 },
+      { collect: COLLECT_OK },
     )
     check('issue1: shell-metachar outputCsv returns error', !!result.error && /outputCsv/.test(result.error))
     check('issue1: rejected before any agent call', calls.length === 0)
-    const traversal = await run({ websetId: 'webset_test', outputCsv: 'exports/../../etc/x.csv' }, { collect: COLLECT_OK, expectedTotalLines: 0 })
+    const traversal = await run({ websetId: 'webset_test', outputCsv: 'exports/../../etc/x.csv' }, { collect: COLLECT_OK })
     check('issue1: dot-dot path rejected', !!traversal.result.error)
     const spaced = await run(
       { websetId: 'webset_test', outputCsv: 'exports/letta candidates.csv' },
-      { collect: COLLECT_OK, expectedTotalLines: 5 },
+      { collect: COLLECT_OK },
     )
     check('issue1: benign path with space accepted (run completes)', !spaced.result.error && spaced.result.csvWritten === true)
   }
@@ -124,7 +144,7 @@ function check(desc, cond) {
   {
     const { result } = await run(
       { websetId: 'webset_test' },
-      { collect: { ...COLLECT_OK, criteria: [] }, expectedTotalLines: 5 },
+      { collect: { ...COLLECT_OK, criteria: [] } },
     )
     check('issue2: empty criteria → fatal error, no export', !!result.error && /criteri/i.test(result.error))
   }
@@ -133,11 +153,11 @@ function check(desc, cond) {
   {
     const { result, calls } = await run(
       { websetId: 'webset_test' },
-      { collect: COLLECT_OK, corruptPart: 'v-000.csv', expectedTotalLines: 5 },
+      { collect: COLLECT_OK, corruptPart: 'v-000.csv' },
     )
     check('issue3: failed part → error return', !!result.error && /part/i.test(result.error))
     check('issue3: failedParts names the part', Array.isArray(result.failedParts) && result.failedParts[0]?.includes('v-000'))
-    check('issue3: verification counts preserved in error return', result.verified === 3 && result.persisted === 3)
+    check('issue3: verification counts preserved in error return', result.verified === 4 && result.persisted === 4)
     check('issue3: exactly MAX_WRITE_ATTEMPTS tries for the bad part',
       calls.filter((c) => c.startsWith('write:v-000')).length === 3)
     check('issue3: no assemble/report after failure', !calls.includes('assemble-csv'))
@@ -147,9 +167,9 @@ function check(desc, cond) {
   {
     const { result, calls } = await run(
       { websetId: 'webset_test' },
-      { collect: COLLECT_OK, verifyNullOnce: 'Bob', expectedTotalLines: 5 },
+      { collect: COLLECT_OK, verifyNullOnce: 'Bob' },
     )
-    check('issue4: all 3 candidates verified after retry', result.verified === 3 && result.unverified.length === 0)
+    check('issue4: all 4 candidates verified after retry', result.verified === 4 && result.unverified.length === 0)
     check('issue4: retry used a :retry-suffixed label', calls.includes('verify:Bob:retry'))
     check('issue4: run completes with csvWritten', result.csvWritten === true)
   }
@@ -158,40 +178,40 @@ function check(desc, cond) {
   {
     const { result } = await run(
       { websetId: 'webset_test' },
-      { collect: COLLECT_OK, expectedTotalLines: 4 }, // 2 validated rows + header + rejected header
+      { collect: COLLECT_OK },
       (p, o, base) => (o?.label?.startsWith('verify:Bob') ? null : base(p, o)),
     )
     check('issue4b: permanently-failing candidate lands in unverified',
       result.unverified?.length === 1 && result.unverified[0].name === 'Bob')
-    check('issue4b: other candidates still exported', result.verified === 2 && result.csvWritten === true)
+    check('issue4b: other candidates still exported', result.verified === 3 && result.csvWritten === true)
   }
 
   // --- Bugbot 1+4: script recomputes include; agent's include:true is ignored --
   {
     const { result } = await run(
       { websetId: 'webset_test' },
-      { collect: COLLECT_OK, missFor: 'Bob', expectedTotalLines: 5 }, // 2 validated + 1 rejected + 2 headers
+      { collect: COLLECT_OK, missFor: 'Bob' },
     )
-    check('bug1+4: Miss criterion overrides agent include:true → rejected', result.rejected === 1 && result.validated === 2)
+    check('bug1+4: Miss criterion overrides agent include:true → rejected', result.rejected === 1 && result.validated === 3)
     const ident = await run(
       { websetId: 'webset_test' },
-      { collect: COLLECT_OK, identityUnconfirmedFor: 'Cara', expectedTotalLines: 5 },
+      { collect: COLLECT_OK, identityUnconfirmedFor: 'Cara' },
     )
     check('bug1+4: unconfirmed identity overrides agent include:true → rejected',
-      ident.result.rejected === 1 && ident.result.validated === 2)
+      ident.result.rejected === 1 && ident.result.validated === 3)
     const unclear = await run(
       { websetId: 'webset_test' },
-      { collect: COLLECT_OK, unclearFor: 'Alice', expectedTotalLines: 5 },
+      { collect: COLLECT_OK, unclearFor: 'Alice' },
     )
     check('bug1+4: Unclear criterion does NOT reject (recall policy)',
-      unclear.result.validated === 3 && unclear.result.rejected === 0)
+      unclear.result.validated === 4 && unclear.result.rejected === 0)
   }
 
   // --- Bugbot 2: truncated ingestion is surfaced, not silent -------------------
   {
     const { result, logs } = await run(
       { websetId: 'webset_test' },
-      { collect: { ...COLLECT_OK, truncated: true }, expectedTotalLines: 5 },
+      { collect: { ...COLLECT_OK, truncated: true } },
     )
     check('bug2: ingestTruncated surfaced in return', result.ingestTruncated === true)
     check('bug2: truncation warning logged', logs.some((l) => /maxItems cap/.test(l)))
@@ -201,9 +221,22 @@ function check(desc, cond) {
   {
     const { result } = await run(
       { websetId: 'webset_test', maxVerify: 0 },
-      { collect: COLLECT_OK, expectedTotalLines: 0 },
+      { collect: COLLECT_OK },
     )
-    check('bug5: maxVerify=0 reports found=3, not 0', result.found === 3 && result.uniqueCandidates === 3 && result.verified === 0)
+    check('bug5: maxVerify=0 reports found=4, not 0', result.found === 4 && result.uniqueCandidates === 4 && result.verified === 0)
+  }
+
+  // --- Codex 2: assembled-file CRC mismatch → csvWritten false -----------------
+  {
+    const { result } = await run(
+      { websetId: 'webset_test' },
+      { collect: COLLECT_OK },
+      (p, o, base) =>
+        o?.label === 'assemble-csv'
+          ? base(p, o).then((m) => ({ ...m, csvCrc: m.csvCrc + 1 })) // same bytes, one bit of content difference
+          : base(p, o),
+    )
+    check('codex2: assembled CRC mismatch (same byte count) → csvWritten=false', result.csvWritten === false)
   }
 
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`)

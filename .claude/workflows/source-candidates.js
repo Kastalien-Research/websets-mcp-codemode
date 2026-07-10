@@ -157,14 +157,65 @@ const MARK_SCHEMA = {
 // self-report raw measurements only; the script (not the agent) decides
 // pass/fail by comparing them to the expected values it already computed —
 // an LLM can misjudge or misreport its own success, but plain JS comparing
-// two numbers can't be talked into a false positive.
+// two numbers can't be talked into a false positive. The measurement is a
+// POSIX cksum CRC + byte count (not a line count): a line count passes any
+// same-length substitution, while any content change at all flips the CRC.
 const WRITE_SCHEMA = {
   type: 'object',
-  required: ['linesWritten', 'tagMatches'],
+  required: ['cksumCrc', 'bytes'],
   properties: {
-    linesWritten: { type: 'number' },
-    tagMatches: { type: 'number' },
+    cksumCrc: { type: 'number' },
+    bytes: { type: 'number' },
   },
+}
+
+const ASSEMBLE_SCHEMA = {
+  type: 'object',
+  required: ['csvCrc', 'csvBytes', 'rejectedCrc', 'rejectedBytes'],
+  properties: {
+    csvCrc: { type: 'number' },
+    csvBytes: { type: 'number' },
+    rejectedCrc: { type: 'number' },
+    rejectedBytes: { type: 'number' },
+  },
+}
+
+// POSIX cksum (CRC-32, poly 0x04C11DB7, MSB-first, length appended, final
+// complement) over the UTF-8 bytes of a string, in pure JS — this sandbox has
+// no crypto or TextEncoder, and cksum is the strongest digest both this
+// script and a stock shell can compute independently. The implementation is
+// validated byte-for-byte against the real cksum binary in
+// tests/source-candidates.mock-test.cjs.
+const CKSUM_TABLE = (() => {
+  const t = new Array(256)
+  for (let i = 0; i < 256; i++) {
+    let c = (i << 24) >>> 0
+    for (let j = 0; j < 8; j++) c = ((c & 0x80000000) ? ((c << 1) ^ 0x04c11db7) : (c << 1)) >>> 0
+    t[i] = c
+  }
+  return t
+})()
+function cksumOf(s) {
+  let crc = 0
+  let n = 0
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)
+    const bytes =
+      cp < 0x80 ? [cp]
+      : cp < 0x800 ? [0xc0 | (cp >> 6), 0x80 | (cp & 63)]
+      : cp < 0x10000 ? [0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63)]
+      : [0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63)]
+    for (const b of bytes) {
+      crc = (((crc << 8) >>> 0) ^ CKSUM_TABLE[((crc >>> 24) ^ b) & 0xff]) >>> 0
+      n++
+    }
+  }
+  let len = n
+  while (len > 0) {
+    crc = (((crc << 8) >>> 0) ^ CKSUM_TABLE[((crc >>> 24) ^ (len & 0xff)) & 0xff]) >>> 0
+    len = Math.floor(len / 256)
+  }
+  return { crc: (~crc) >>> 0, bytes: n }
 }
 
 // --- Phase 1: Compose (skipped when resuming an existing webset) -------------
@@ -544,10 +595,9 @@ function toParts(prefix, headerLine, rows) {
 }
 const headerLine = header.map(esc).join(',')
 const rejHeaderLine = [...header, 'Rejection reason'].map(esc).join(',')
-const parts = [
-  ...toParts('v', headerLine, validated.map((v) => toRow(v, false))),
-  ...toParts('r', rejHeaderLine, rejected.map((v) => toRow(v, true))),
-]
+const vParts = toParts('v', headerLine, validated.map((v) => toRow(v, false)))
+const rParts = toParts('r', rejHeaderLine, rejected.map((v) => toRow(v, true)))
+const parts = [...vParts, ...rParts]
 
 // A dry run of this pipeline (2026-07-10) had a write agent silently replace
 // 4/100 candidate rows with a stray "</content>" line — same expected
@@ -559,25 +609,24 @@ const parts = [
 // failing part — the same script-owns-the-loop pattern as the Populate poll
 // loop above, for the same reason (don't let one agent self-manage a
 // checkable multi-step process).
-const expectedLines = (p) => p.content.split('\n').filter((l) => l.length > 0).length
 const MAX_WRITE_ATTEMPTS = 3
 
 async function writePartVerified(p) {
-  const expected = expectedLines(p)
+  const expected = cksumOf(p.content)
   for (let attempt = 1; attempt <= MAX_WRITE_ATTEMPTS; attempt++) {
     const r = await agent(
       `Using your Write tool, write EXACTLY the following content to "${p.path}" (relative to the current ` +
         `project directory, creating parent directories as needed; overwrite if it already exists). Do not ` +
         `reformat, reorder, or summarize — preserve every line verbatim. The <<<PART/PART markers delimit the ` +
         `content and are not part of the file.\n\n<<<PART\n${p.content}PART\n\n` +
-        `Then, with your Bash tool, run \`wc -l < "${p.path}"\` and \`grep -cE '</?[a-zA-Z]+>' "${p.path}"\`. ` +
-        `Report exactly what those two commands printed as linesWritten and tagMatches — do not interpret, ` +
-        `round, or editorialize about whether they look right, just report the raw numbers.`,
+        `Then, with your Bash tool, run \`cksum "${p.path}"\`. Report the first number it printed as cksumCrc ` +
+        `and the second as bytes — do not interpret, round, or editorialize about whether they look right, ` +
+        `just report the raw numbers.`,
       { label: `write:${p.path.split('/').pop()}${attempt > 1 ? `:retry${attempt}` : ''}`, phase: 'Export', schema: WRITE_SCHEMA, model: MODEL_REASONING },
     )
-    const ok = !!r && r.linesWritten === expected && r.tagMatches === 0
+    const ok = !!r && r.cksumCrc === expected.crc && r.bytes === expected.bytes
     if (ok) return { path: p.path, ok: true, attempts: attempt }
-    log(`Write check failed for ${p.path} (attempt ${attempt}/${MAX_WRITE_ATTEMPTS}): got linesWritten=${r?.linesWritten}, tagMatches=${r?.tagMatches}, expected linesWritten=${expected}, tagMatches=0`)
+    log(`Write check failed for ${p.path} (attempt ${attempt}/${MAX_WRITE_ATTEMPTS}): got crc=${r?.cksumCrc}, bytes=${r?.bytes}, expected crc=${expected.crc}, bytes=${expected.bytes}`)
   }
   return { path: p.path, ok: false, attempts: MAX_WRITE_ATTEMPTS }
 }
@@ -606,13 +655,12 @@ const [assembled, report] = await parallel([
       `Assemble the final CSVs from part files using your Bash tool. Run exactly:\n` +
         `  cat "${partsDir}"/v-*.csv > "${csvPath}"\n` +
         `  cat "${partsDir}"/r-*.csv > "${rejectedPath}"\n` +
-        `(shell glob order is lexicographic, which is the correct part order). Then run \`wc -l < "${csvPath}"\`, ` +
-        `\`wc -l < "${rejectedPath}"\`, and \`grep -cE '</?[a-zA-Z]+>' "${csvPath}" "${rejectedPath}"\` (sum both ` +
-        `files' match counts into one number). Report the two line counts as linesWritten (sum them into one ` +
-        `number: ${csvPath}'s count plus ${rejectedPath}'s count) and the combined grep count as tagMatches — raw ` +
+        `(shell glob order is lexicographic, which is the correct part order). Then run ` +
+        `\`cksum "${csvPath}" "${rejectedPath}"\`. Report ${csvPath}'s line as csvCrc (first number) and ` +
+        `csvBytes (second number), and ${rejectedPath}'s line as rejectedCrc and rejectedBytes — raw ` +
         `numbers only, no interpretation. Then remove the parts directory with \`trash "${partsDir}"\` if the trash ` +
         `command exists — otherwise leave it in place; do NOT use rm -rf.`,
-      { label: 'assemble-csv', phase: 'Export', schema: WRITE_SCHEMA, model: MODEL_REASONING },
+      { label: 'assemble-csv', phase: 'Export', schema: ASSEMBLE_SCHEMA, model: MODEL_REASONING },
     )
   },
   () =>
@@ -628,12 +676,18 @@ const [assembled, report] = await parallel([
 ])
 
 // csvWritten is a script-side assertion, not an agent's self-report: every
-// part passed its individual check (enforced by the early return above) AND
-// the assembled totals match what the script itself computed as expected.
-const expectedTotalLines = (validated.length + 1) + (rejected.length + 1)
-const csvWritten = !!assembled && assembled.linesWritten === expectedTotalLines && assembled.tagMatches === 0
+// part passed its individual cksum check (enforced by the early return
+// above) AND each assembled file's CRC + byte count equal what the script
+// itself computed over the concatenated part contents — exact content
+// equality, not a count heuristic.
+const expectedCsv = cksumOf(vParts.map((p) => p.content).join(''))
+const expectedRej = cksumOf(rParts.map((p) => p.content).join(''))
+const csvWritten =
+  !!assembled &&
+  assembled.csvCrc === expectedCsv.crc && assembled.csvBytes === expectedCsv.bytes &&
+  assembled.rejectedCrc === expectedRej.crc && assembled.rejectedBytes === expectedRej.bytes
 if (!csvWritten) {
-  log(`CSV assembly did not pass verification (assembled=${JSON.stringify(assembled)}, expected total lines=${expectedTotalLines}) — check ${partsDir} manually`)
+  log(`CSV assembly did not pass verification (assembled=${JSON.stringify(assembled)}, expected csv crc=${expectedCsv.crc}/${expectedCsv.bytes}B, rejected crc=${expectedRej.crc}/${expectedRej.bytes}B) — check ${partsDir} manually`)
 }
 
 return {
