@@ -30,10 +30,26 @@ The server listens on port `7860` by default.
 
 ### Connect an MCP Client
 
+For Claude Code, copy the checked-in template (`.mcp.json` is gitignored):
+
+```bash
+cp .mcp.json.template .mcp.json
+```
+
+Claude Code picks it up on next launch in this directory. The server name
+**must** be `websets-codemode-local` — the bundled workflows (e.g.
+`source-candidates`) reference tools by that exact name; a differently-named
+server will connect fine but the workflows will not find it. The template's
+second entry (`websets-channel`, the webhook notification bridge) needs a local
+`pnpm run build` first; if you skip that it shows as disconnected, which is
+harmless — the recruiter workflow doesn't use it.
+
+For other MCP clients:
+
 ```json
 {
   "mcpServers": {
-    "websets": {
+    "websets-codemode-local": {
       "type": "http",
       "url": "http://localhost:7860/mcp"
     }
