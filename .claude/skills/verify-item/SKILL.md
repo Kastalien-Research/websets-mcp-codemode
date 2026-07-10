@@ -35,6 +35,35 @@ For each enrichment:
 - `disputed` — independent source contradicts the enriched value
 - `unverifiable` — no independent data available
 
+### Known deception patterns (empirically validated 2026-07-10, 100+ person-entity webset)
+
+Do not just check "does a source exist" — these specific patterns produced enriched values that
+had a source, and were still wrong. Screen for each explicitly, they recur far more often than
+outright missing data:
+
+- **Liked/reposted content laundered into authorship.** The single largest failure mode found
+  (~28% of rejections in one run): a paper, repo, or achievement belongs to someone whose post the
+  candidate merely liked or shared, not something they authored. Before crediting a paper/repo to
+  a person, confirm the actual byline/commit history names them — a mention on their feed is not
+  evidence of authorship.
+- **Circular self-report.** The only support for a claim is the candidate's own About-section
+  prose, restated rather than corroborated. An independently-written source (paper, repo, press,
+  employer page) is required before a claim counts as confirmed — self-description alone means
+  `unverifiable` or `disputed`, never `confirmed`.
+- **Name-collision misattribution.** A credential (paper, Scholar profile, award) actually belongs
+  to a different person with the same or similar name. Cross-check employer, institution, and
+  timeframe together, not name alone.
+- **Tier/magnitude inflation.** Experience is padded with school years or unrelated roles (typical
+  observed inflation: 1.5–2×, computed vs. self-reported); venue prestige is inflated (an arXiv
+  preprint, workshop paper, or single-contributor-among-thousands credit reported as a top-tier
+  publication); OSS "contribution" turns out to be a zero-commit fork.
+- **Fabricated identifiers.** A specific-looking but nonexistent arXiv ID, degree, or repo name —
+  specificity is not evidence; resolve the identifier and confirm it actually points to this
+  person's claimed work.
+- **Contact info is guessed, not sourced.** A plausible-format email/phone with no independent
+  confirmation it belongs to this person — report the format-plausible-but-unconfirmed distinction
+  rather than treating a plausible pattern as `confirmed`.
+
 ### 4. Return verdict
 
 ```json
