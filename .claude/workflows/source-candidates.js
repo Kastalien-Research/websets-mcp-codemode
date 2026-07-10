@@ -20,6 +20,13 @@ A = A ?? {}
 const COUNT = A.count ?? 100
 const MAX_VERIFY = A.maxVerify ?? COUNT
 
+// outputCsv is interpolated into bash commands inside agent prompts. Quoting
+// at the use sites is not enough on its own (a path containing `"` escapes a
+// double-quoted string), so reject anything but a plain .csv path up front.
+if (A.outputCsv && (!/^[A-Za-z0-9._/ -]+\.csv$/.test(A.outputCsv) || A.outputCsv.includes('..'))) {
+  return { error: 'outputCsv must be a plain .csv path: letters, digits, dot, underscore, slash, space, hyphen only, no "..".' }
+}
+
 // Model tiering: reasoning-load-bearing stages (composing criteria, the
 // skeptical verify-research pass that catches fabrication/inflation, and the
 // cross-candidate report) stay on a frontier model; high-volume mechanical
@@ -302,8 +309,22 @@ if (toVerify.length === 0) return { websetId, found: 0, note: 'Webset produced n
 
 // Canonical column definitions — the emit stage maps verdicts onto these by
 // index, so CSV cells can't be lost to an agent rephrasing a criterion.
-const criteriaCols = collected.criteria ?? []
-const enrichCols = collected.enrichmentColumns ?? []
+// websets.get does not reliably expose search criteria, so prefer what this
+// run composed itself (that IS what websets.create was given); on a
+// {websetId} resume there is no composed spec, and an empty criteria list
+// would silently drop every must-have column from the CSV — treat it as fatal.
+const criteriaCols = (collected.criteria?.length ? collected.criteria : composed?.criteria) ?? []
+const enrichCols =
+  (collected.enrichmentColumns?.length
+    ? collected.enrichmentColumns
+    : composed?.enrichments?.map((e) => e.description)) ?? []
+if (criteriaCols.length === 0) {
+  return {
+    error: 'No criteria recovered (websets.get omitted them and the collect fallback returned none) — aborting rather than exporting a CSV with no criterion columns.',
+    websetId,
+  }
+}
+if (enrichCols.length === 0) log('Warning: no enrichment columns recovered — CSV will carry criteria and notes only')
 const canonicalLists =
   `CANONICAL CRITERIA (report one entry per line, index = the number shown, criterion = the text VERBATIM):\n` +
   criteriaCols.map((c, i) => `${i}. ${c}`).join('\n') +
@@ -314,8 +335,11 @@ const canonicalLists =
 // Research and structured emission are separate stages on purpose: a research-busy
 // agent reliably fails to call StructuredOutput, while a no-tools summarizer never
 // does (lesson inherited from sweep-webset).
-const verified = await pipeline(
-  toVerify,
+// Wrapped in a function so candidates whose chain died (null from research or
+// verdict emission) can be re-run once with fresh agents; retry labels differ
+// so a resumed run's cache cannot replay the original failure.
+const runVerification = (items, retryTag = '') => pipeline(
+  items,
 
   // Stage A — independent verification research (free-form prose, no schema).
   (item) =>
@@ -364,7 +388,7 @@ const verified = await pipeline(
         `enrichment whether the value is confirmed/corrected (give the corrected value)/disputed/unverifiable, ` +
         `whether identity was confirmed, and an overall recommendation. Be skeptical — missing corroboration ` +
         `means Unclear, not Match.`,
-      { label: `verify:${item.name}`, phase: 'Verify', model: MODEL_REASONING },
+      { label: `verify:${item.name}${retryTag}`, phase: 'Verify', model: MODEL_REASONING },
     ),
 
   // Stage B — convert prose into the structured verdict (no tools, no research).
@@ -385,7 +409,7 @@ const verified = await pipeline(
         `criterion is Miss. confidence ∈ [0,1] — low when identity or key claims lack corroboration. notes = ` +
         `one or two sentences a recruiter would want (discrepancies, standout signals).\n\n` +
         `--- WRITEUP ---\n${writeup}`,
-      { label: `verdict:${item.name}`, phase: 'Verify', schema: VERDICT_SCHEMA, effort: 'low', model: MODEL_CHEAP },
+      { label: `verdict:${item.name}${retryTag}`, phase: 'Verify', schema: VERDICT_SCHEMA, effort: 'low', model: MODEL_CHEAP },
     )
   },
 
@@ -404,12 +428,30 @@ const verified = await pipeline(
         `  callOperation('store.annotate', { itemId: '${item.itemId}', type: 'judgment', value: ${JSON.stringify(judgment)}, source: 'source-candidates' })\n` +
         `If annotate fails with a missing-item error, first mirror it: callOperation('store.syncItem', { id: '${item.itemId}', websetId: '${websetId}', name: ${JSON.stringify(item.name)} }) and retry. ` +
         `Return { itemId: '${item.itemId}', marked: true }.`,
-      { label: `persist:${item.name}`, phase: 'Persist', schema: MARK_SCHEMA, effort: 'low', model: MODEL_CHEAP },
+      { label: `persist:${item.name}${retryTag}`, phase: 'Persist', schema: MARK_SCHEMA, effort: 'low', model: MODEL_CHEAP },
     ).then((m) => ({ ...verdict, marked: !!(m && m.marked) }))
   },
 )
 
-const verdicts = verified.filter(Boolean)
+let verdicts = (await runVerification(toVerify)).filter(Boolean)
+
+// A dropped candidate (research or verdict stage died → null) must not just
+// vanish from both CSVs: retry the drops once with fresh agents, then surface
+// anything still missing in the return value instead of silently omitting it.
+const firstPassIds = new Set(verdicts.map((v) => v.itemId))
+const droppedFirstPass = toVerify.filter((it) => !firstPassIds.has(it.itemId))
+if (droppedFirstPass.length > 0) {
+  log(`${droppedFirstPass.length} candidate(s) produced no verdict — retrying once with fresh agents`)
+  verdicts = verdicts.concat((await runVerification(droppedFirstPass, ':retry')).filter(Boolean))
+}
+const verdictIds = new Set(verdicts.map((v) => v.itemId))
+const unverified = toVerify
+  .filter((it) => !verdictIds.has(it.itemId))
+  .map(({ itemId, name }) => ({ itemId, name }))
+if (unverified.length > 0) {
+  log(`Warning: ${unverified.length} candidate(s) still unverified after retry (in neither CSV): ${unverified.map((u) => u.name).join(', ')}`)
+}
+
 const validated = verdicts.filter((v) => v.include)
 const rejected = verdicts.filter((v) => !v.include)
 log(`Verified ${verdicts.length}/${toVerify.length}: ${validated.length} validated, ${rejected.length} rejected`)
@@ -516,29 +558,41 @@ async function writePartVerified(p) {
 }
 
 const partResults = await parallel(parts.map((p) => () => writePartVerified(p)))
-const partsOk = partResults.filter((r) => r.ok).length
-if (partsOk < parts.length) log(`Warning: only ${partsOk}/${parts.length} CSV parts passed verification after retries — final files will be incomplete or corrupted`)
-const allPartsOk = partsOk === parts.length
+const failedParts = partResults.filter((r) => !r.ok)
+if (failedParts.length > 0) {
+  // The export is the deliverable — do not return real-looking csv paths over
+  // stale or partial files. Verification work is already persisted in the
+  // store, so a resume of this run only redoes the export.
+  return {
+    error: `CSV export failed verification: ${parts.length - failedParts.length}/${parts.length} parts passed after ${MAX_WRITE_ATTEMPTS} attempts each`,
+    websetId,
+    verified: verdicts.length,
+    validated: validated.length,
+    rejected: rejected.length,
+    persisted: verdicts.filter((v) => v.marked).length,
+    partsDir,
+    failedParts: failedParts.map((r) => r.path),
+  }
+}
 
 const [assembled, report] = await parallel([
   () => {
-    if (!allPartsOk) return Promise.resolve({ linesWritten: -1, tagMatches: -1 })
     return agent(
       `Assemble the final CSVs from part files using your Bash tool. Run exactly:\n` +
-        `  cat ${partsDir}/v-*.csv > ${csvPath}\n` +
-        `  cat ${partsDir}/r-*.csv > ${rejectedPath}\n` +
+        `  cat "${partsDir}"/v-*.csv > "${csvPath}"\n` +
+        `  cat "${partsDir}"/r-*.csv > "${rejectedPath}"\n` +
         `(shell glob order is lexicographic, which is the correct part order). Then run \`wc -l < "${csvPath}"\`, ` +
         `\`wc -l < "${rejectedPath}"\`, and \`grep -cE '</?[a-zA-Z]+>' "${csvPath}" "${rejectedPath}"\` (sum both ` +
         `files' match counts into one number). Report the two line counts as linesWritten (sum them into one ` +
         `number: ${csvPath}'s count plus ${rejectedPath}'s count) and the combined grep count as tagMatches — raw ` +
-        `numbers only, no interpretation. Then remove the parts directory with \`trash ${partsDir}\` if the trash ` +
+        `numbers only, no interpretation. Then remove the parts directory with \`trash "${partsDir}"\` if the trash ` +
         `command exists — otherwise leave it in place; do NOT use rm -rf.`,
       { label: 'assemble-csv', phase: 'Export', schema: WRITE_SCHEMA, model: MODEL_REASONING },
     )
   },
   () =>
     agent(
-      `Write a concise sourcing report for a recruiter. Webset ${websetId}: ${toVerify.length} candidates ` +
+      `Write a concise sourcing report for a recruiter. Webset ${websetId}: ${verdicts.length} candidates ` +
         `verified, ${validated.length} validated, ${rejected.length} rejected. For the validated group, rank the ` +
         `top candidates by confidence and note anything a recruiter should double-check. Call out patterns in the ` +
         `rejections (which claims the webset most often got wrong — that is feedback for tightening future ` +
@@ -549,12 +603,12 @@ const [assembled, report] = await parallel([
 ])
 
 // csvWritten is a script-side assertion, not an agent's self-report: every
-// part passed its individual check AND the assembled totals match what the
-// script itself computed as expected.
+// part passed its individual check (enforced by the early return above) AND
+// the assembled totals match what the script itself computed as expected.
 const expectedTotalLines = (validated.length + 1) + (rejected.length + 1)
-const csvWritten = allPartsOk && !!assembled && assembled.linesWritten === expectedTotalLines && assembled.tagMatches === 0
+const csvWritten = !!assembled && assembled.linesWritten === expectedTotalLines && assembled.tagMatches === 0
 if (!csvWritten) {
-  log(`CSV export did not pass verification (allPartsOk=${allPartsOk}, assembled=${JSON.stringify(assembled)}, expected total lines=${expectedTotalLines}) — check ${partsDir} manually`)
+  log(`CSV assembly did not pass verification (assembled=${JSON.stringify(assembled)}, expected total lines=${expectedTotalLines}) — check ${partsDir} manually`)
 }
 
 return {
@@ -564,6 +618,7 @@ return {
   verified: verdicts.length,
   validated: validated.length,
   rejected: rejected.length,
+  unverified,
   persisted: verdicts.filter((v) => v.marked).length,
   csvPath,
   rejectedPath,
