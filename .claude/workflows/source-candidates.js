@@ -84,11 +84,12 @@ const POLL_SCHEMA = {
 
 const COLLECT_SCHEMA = {
   type: 'object',
-  required: ['websetId', 'criteria', 'enrichmentColumns', 'items'],
+  required: ['websetId', 'criteria', 'enrichmentColumns', 'items', 'truncated'],
   properties: {
     websetId: { type: 'string' },
     criteria: { type: 'array', items: { type: 'string' } },
     enrichmentColumns: { type: 'array', items: { type: 'string' } },
+    truncated: { type: 'boolean' },
     items: {
       type: 'array',
       items: {
@@ -279,18 +280,22 @@ const collected = await agent(
   `Collect every item of webset "${websetId}" plus its column definitions, using ${EXECUTE_TOOL}.\n\n` +
     `1. callOperation('items.getAll', { websetId: '${websetId}', ingest: true, maxItems: ${COUNT * 5} }) — ` +
     `ingest:true mirrors EVERY raw item into the local store. Ignore the returned list (it is only the ` +
-    `passing subset).\n` +
+    `passing subset), but record the response's \`truncated\` boolean — it means the webset holds more items ` +
+    `than maxItems and ingestion stopped early.\n` +
     `2. callOperation('websets.get', { websetId: '${websetId}' }) — collect the enrichment descriptions ` +
     `(enrichments[].description, in order) and the search criteria descriptions.\n` +
     `3. callOperation('store.query', { sql: "SELECT id, name, url FROM items WHERE webset_id = ?", params: ['${websetId}'] }) ` +
     `— this is the complete set including items whose evaluations failed.\n\n` +
-    `Return websetId, criteria (array of criterion description strings — if the webset object does not expose ` +
-    `them, take the distinct evaluation criterion strings from one item's evaluations via items.list), ` +
-    `enrichmentColumns (array of enrichment description strings), and items as [{itemId, name, url}] for ` +
-    `every row store.query returned. Do not fabricate or drop any.`,
+    `Return websetId, truncated (the boolean from step 1), criteria (array of criterion description strings — ` +
+    `if the webset object does not expose them, take the distinct evaluation criterion strings from one item's ` +
+    `evaluations via items.list), enrichmentColumns (array of enrichment description strings), and items as ` +
+    `[{itemId, name, url}] for every row store.query returned. Do not fabricate or drop any.`,
   { label: 'collect', phase: 'Populate', schema: COLLECT_SCHEMA, model: MODEL_REASONING },
 )
 if (!collected || !Array.isArray(collected.items)) return { error: 'Item collection failed.', websetId }
+if (collected.truncated) {
+  log(`Warning: items.getAll hit its maxItems cap (${COUNT * 5}) — the webset holds more items than were ingested; candidates beyond the cap are not in this run`)
+}
 
 // Dedupe by person — the same entity often appears 2-3× as separate witem_ ids.
 const seen = new Set()
@@ -305,7 +310,15 @@ const dropped = collected.items.length - candidates.length
 const toVerify = candidates.slice(0, MAX_VERIFY)
 if (candidates.length > MAX_VERIFY) log(`Capping verification at ${MAX_VERIFY} of ${candidates.length} candidates (maxVerify)`)
 log(`Collected ${collected.items.length} items → ${candidates.length} unique candidates${dropped ? ` (${dropped} duplicates merged)` : ''}; verifying ${toVerify.length}`)
-if (toVerify.length === 0) return { websetId, found: 0, note: 'Webset produced no items to verify.' }
+if (toVerify.length === 0) {
+  return {
+    websetId,
+    found: collected.items.length,
+    uniqueCandidates: candidates.length,
+    verified: 0,
+    note: 'No candidates to verify (webset produced no items, or maxVerify is 0).',
+  }
+}
 
 // Canonical column definitions — the emit stage maps verdicts onto these by
 // index, so CSV cells can't be lost to an agent rephrasing a criterion.
@@ -410,7 +423,19 @@ const runVerification = (items, retryTag = '') => pipeline(
         `one or two sentences a recruiter would want (discrepancies, standout signals).\n\n` +
         `--- WRITEUP ---\n${writeup}`,
       { label: `verdict:${item.name}${retryTag}`, phase: 'Verify', schema: VERDICT_SCHEMA, effort: 'low', model: MODEL_CHEAP },
-    )
+    ).then((v) => {
+      if (!v) return null
+      // include is recomputed here deterministically — the transcription
+      // agent's own include boolean is advisory only (an agent asserting a
+      // conclusion about its own output is the no-self-graded-verification
+      // failure mode; the inputs to the rule sit right next to it in the same
+      // object). Policy: identity confirmed AND no must-have criterion is
+      // Miss. Unclear deliberately does NOT reject — sourcing favors recall,
+      // Unclear means "no independent corroboration found", not "disproven",
+      // and every criterion verdict is a visible per-candidate CSV column.
+      const include = !!v.identityConfirmed && !(v.criteria ?? []).some((c) => c.verdict === 'Miss')
+      return { ...v, include }
+    })
   },
 
   // Stage C — persist to the local store (deterministic, isolated so a research-busy
@@ -614,6 +639,7 @@ if (!csvWritten) {
 return {
   websetId,
   found: collected.items.length,
+  ingestTruncated: !!collected.truncated,
   uniqueCandidates: candidates.length,
   verified: verdicts.length,
   validated: validated.length,

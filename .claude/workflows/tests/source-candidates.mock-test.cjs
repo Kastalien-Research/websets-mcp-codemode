@@ -1,6 +1,7 @@
 // Mock harness for .claude/workflows/source-candidates.js — exercises the
-// deterministic script logic behind the four Greptile fixes without any real
-// agents. Run: node .scratch/test-source-candidates.js
+// deterministic script logic behind the Greptile/Bugbot review fixes without
+// any real agents. Run from repo root:
+//   node .claude/workflows/tests/source-candidates.mock-test.cjs
 const fs = require('fs')
 
 const SRC = fs
@@ -45,9 +46,15 @@ function makeAgent(cfg, calls) {
     if (label.startsWith('verdict:')) {
       const itemId = /itemId "([^"]+)"/.exec(prompt)?.[1] ?? /itemId="([^"]+)"/.exec(prompt)?.[1]
       const name = /candidate "([^"]+)"/.exec(prompt)?.[1] ?? 'unknown'
+      // include is always emitted true — the script must recompute it.
       return {
-        itemId, name, identityConfirmed: true, include: true, confidence: 0.9,
-        criteria: [{ index: 0, criterion: cfg.collect.criteria[0] ?? 'C0', verdict: 'Match' }],
+        itemId, name,
+        identityConfirmed: cfg.identityUnconfirmedFor !== name,
+        include: true, confidence: 0.9,
+        criteria: [{
+          index: 0, criterion: cfg.collect.criteria[0] ?? 'C0',
+          verdict: cfg.missFor === name ? 'Miss' : cfg.unclearFor === name ? 'Unclear' : 'Match',
+        }],
         enrichments: [], notes: 'ok',
       }
     }
@@ -87,7 +94,7 @@ const ITEMS = [
   { itemId: 'w2', name: 'Bob', url: 'https://x/b' },
   { itemId: 'w3', name: 'Cara', url: 'https://x/c' },
 ]
-const COLLECT_OK = { websetId: 'webset_test', criteria: ['C0 pub or OSS'], enrichmentColumns: ['E0 email'], items: ITEMS }
+const COLLECT_OK = { websetId: 'webset_test', criteria: ['C0 pub or OSS'], enrichmentColumns: ['E0 email'], items: ITEMS, truncated: false }
 
 let failures = 0
 function check(desc, cond) {
@@ -157,6 +164,46 @@ function check(desc, cond) {
     check('issue4b: permanently-failing candidate lands in unverified',
       result.unverified?.length === 1 && result.unverified[0].name === 'Bob')
     check('issue4b: other candidates still exported', result.verified === 2 && result.csvWritten === true)
+  }
+
+  // --- Bugbot 1+4: script recomputes include; agent's include:true is ignored --
+  {
+    const { result } = await run(
+      { websetId: 'webset_test' },
+      { collect: COLLECT_OK, missFor: 'Bob', expectedTotalLines: 5 }, // 2 validated + 1 rejected + 2 headers
+    )
+    check('bug1+4: Miss criterion overrides agent include:true → rejected', result.rejected === 1 && result.validated === 2)
+    const ident = await run(
+      { websetId: 'webset_test' },
+      { collect: COLLECT_OK, identityUnconfirmedFor: 'Cara', expectedTotalLines: 5 },
+    )
+    check('bug1+4: unconfirmed identity overrides agent include:true → rejected',
+      ident.result.rejected === 1 && ident.result.validated === 2)
+    const unclear = await run(
+      { websetId: 'webset_test' },
+      { collect: COLLECT_OK, unclearFor: 'Alice', expectedTotalLines: 5 },
+    )
+    check('bug1+4: Unclear criterion does NOT reject (recall policy)',
+      unclear.result.validated === 3 && unclear.result.rejected === 0)
+  }
+
+  // --- Bugbot 2: truncated ingestion is surfaced, not silent -------------------
+  {
+    const { result, logs } = await run(
+      { websetId: 'webset_test' },
+      { collect: { ...COLLECT_OK, truncated: true }, expectedTotalLines: 5 },
+    )
+    check('bug2: ingestTruncated surfaced in return', result.ingestTruncated === true)
+    check('bug2: truncation warning logged', logs.some((l) => /maxItems cap/.test(l)))
+  }
+
+  // --- Bugbot 5: empty toVerify still reports real found counts ----------------
+  {
+    const { result } = await run(
+      { websetId: 'webset_test', maxVerify: 0 },
+      { collect: COLLECT_OK, expectedTotalLines: 0 },
+    )
+    check('bug5: maxVerify=0 reports found=3, not 0', result.found === 3 && result.uniqueCandidates === 3 && result.verified === 0)
   }
 
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`)
