@@ -21,7 +21,7 @@ curl -fsSL https://claude.ai/install.sh | bash
 3. **From this project's root directory, in one terminal, run:**
 
 ```bash
-docker-compose build && docker-compose up
+pnpm install && pnpm build && docker-compose build && docker-compose up
 ```
 
 In another terminal, run:
