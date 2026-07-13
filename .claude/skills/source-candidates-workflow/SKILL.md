@@ -1,9 +1,9 @@
 ---
-name: source-candidates
+name: source-candidates-workflow
 description: Source and independently verify candidates for a role from a job description URL. Runs the source-candidates workflow (Webset creation → Exa verification of every claim → validated/rejected CSVs). Use whenever the user wants to find candidates, source people for a role, run a recruiting search from a job posting, or invokes /source-candidates.
 argument-hint: [job-description-URL] [count=25] [additional info | --more-info]
 user-invocable: true
-allowed-tools: Read, Workflow, AskUserQuestion, WebFetch, ToolSearch, mcp__websets-codemode-local__execute, mcp__websets-codemode-local__search
+allowed-tools: Read, Workflow, AskUserQuestion, WebFetch, ToolSearch, mcp__websets-codemode-local__execute, mcp__websets-codemode-local__search, mcp__websets-codemode-local__status
 ---
 
 Run the recruiter sourcing pipeline defined in `.claude/workflows/source-candidates.js` from a job description. This skill is the argument-parsing and intake front end; all sourcing, verification, and CSV export happens inside the named workflow — do not reimplement any of it inline.
