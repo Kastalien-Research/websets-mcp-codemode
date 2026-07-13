@@ -61,6 +61,20 @@ Workflow({
 
 Pass `args` as a real JSON object, not a stringified one. Do not set `model`/`cheapModel`/`outputCsv` unless the user asked for them. To re-verify or re-export an existing webset instead of creating a new one, pass `{ websetId: '...' }` in place of role/candidate (the user will say something like "resume webset ws_...").
 
+### Export layout
+
+Every webset gets a **dedicated subfolder** under `exports/`, keyed by webset ID:
+
+```
+exports/<websetId>/
+  candidates.csv              # validated rows
+  candidates-rejected.csv     # rejected rows (reasons included)
+  sourcing-report.md          # recruiter-facing synthesis (when written)
+  .parts/                     # transient verification parts (removed after successful assembly)
+```
+
+Do not dump CSVs or reports into the `exports/` root. If the user overrides `outputCsv`, keep it inside that webset's subfolder (e.g. `exports/<websetId>/custom-name.csv`); the rejected sibling and parts dir stay under the same folder.
+
 The workflow runs in the background and can take a long time — population of a webset alone can run 30 min to 2+ hours. After launching:
 
 1. Tell the user it's running, roughly what the phases are (Compose → Populate → Verify → Export), and that population is the long pole.
@@ -68,4 +82,4 @@ The workflow runs in the background and can take a long time — population of a
 
 ## Step 5 — Report results
 
-When the workflow completes, summarize from its return value: candidates found, unique, verified, validated vs. rejected, and the two CSV paths (`csvPath`, `rejectedPath`). Surface `unverified` names and any `ingestTruncated`/`csvWritten: false` warnings honestly — a failed export means the CSVs on disk are not trustworthy, and the return value's `partsDir` is where the verified parts live. Relay the workflow's `report` (the recruiter-facing synthesis) as the main body of your answer.
+When the workflow completes, summarize from its return value: candidates found, unique, verified, validated vs. rejected, and the paths under `exports/<websetId>/` (`csvPath`, `rejectedPath`, `reportPath`). Surface `unverified` names and any `ingestTruncated`/`csvWritten: false` warnings honestly — a failed export means the CSVs on disk are not trustworthy, and the return value's `partsDir` (under that same webset folder) is where the verified parts live. Relay the workflow's `report` (the recruiter-facing synthesis) as the main body of your answer.
