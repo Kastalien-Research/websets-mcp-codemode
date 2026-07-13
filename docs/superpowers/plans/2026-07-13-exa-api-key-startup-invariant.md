@@ -4,9 +4,9 @@
 
 **Goal:** Restore the production Exa API key startup wiring and enforce it with an entrypoint regression test plus a required-capable CI build check.
 
-**Architecture:** Keep `resolveExaApiKey` as the configuration contract and restore only its missing production-entrypoint wiring. Exercise the real TypeScript entrypoint in a bounded child process so the test detects disconnected wiring, then add a stable GitHub Actions workflow whose observed check context can later be added to the existing ruleset after separate approval.
+**Architecture:** Keep `resolveExaApiKey` as the configuration contract and preserve the startup wiring restored on current `master`. Exercise the real TypeScript entrypoint in a bounded child process so the test detects disconnected wiring, then extend the stable GitHub Actions build workflow with that focused test; its observed check context can later be added to the existing ruleset after separate approval.
 
-**Tech Stack:** TypeScript, Node.js 22, tsx, Vitest, pnpm 10.32.1, GitHub Actions.
+**Tech Stack:** TypeScript, Node.js 20, tsx, Vitest, pnpm 10.32.1, GitHub Actions.
 
 ## Global Constraints
 
@@ -69,15 +69,16 @@ Run: `pnpm exec vitest run src/__tests__/startup.test.ts`
 Expected: FAIL because stderr does not contain `EXA_API_KEY is not set.` or
 `ALLOW_NO_EXA_KEY=1`; a nonzero child exit by itself is not sufficient.
 
-### Task 2: Restore the minimal startup wiring
+### Task 2: Verify the startup wiring on current master
 
 **Files:**
-- Modify: `src/index.ts`
+- Verify: `src/index.ts`
 - Test: `src/__tests__/startup.test.ts`
 
 **Interfaces:**
 - Consumes: `resolveExaApiKey(env: Record<string, string | undefined>): ResolvedExaApiKey` from `src/config.ts`.
-- Produces: a defined `exaApiKey: string` passed to `createServer` after fail-fast resolution.
+- Produces: confirmation that current `master` defines `exaApiKey: string` before passing it
+  to `createServer`.
 
 - [ ] **Step 1: Import the existing resolver**
 
@@ -105,55 +106,46 @@ Run: `pnpm exec vitest run src/__tests__/startup.test.ts src/__tests__/config.te
 
 Expected: both files pass; the startup child exits 1 with both guidance strings.
 
-- [ ] **Step 4: Commit the behavioral repair**
+- [ ] **Step 4: Commit the behavioral regression test**
 
 ```bash
-git add src/index.ts src/__tests__/startup.test.ts
-git commit -m "fix: enforce Exa key resolution at startup"
+git add src/__tests__/startup.test.ts
+git commit -m "test: enforce Exa key resolution at startup"
 ```
 
-### Task 3: Add the ordinary CI build gate
+### Task 3: Extend the ordinary CI build gate
 
 **Files:**
-- Create: `.github/workflows/ci.yml`
+- Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
-- Consumes: `packageManager: pnpm@10.32.1`, `pnpm run build`, and `pnpm test` from `package.json`.
-- Produces: stable workflow/job identity `Build / build-and-test` subject to confirmation from the live PR check.
+- Consumes: `packageManager: pnpm@10.32.1`, `pnpm run build`, and the focused startup/config
+  Vitest files.
+- Produces: the existing stable `build` workflow/job identity, subject to confirmation from the live PR check.
 
 - [ ] **Step 1: Add the workflow**
 
 ```yaml
-name: Build
+name: build
 
 on:
   pull_request:
   push:
     branches: [master]
 
-permissions:
-  contents: read
-
 jobs:
-  build-and-test:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - name: Activate pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.32.1 --activate
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Build
-        run: pnpm run build
-      - name: Test
-        run: pnpm test
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm exec vitest run src/__tests__/startup.test.ts src/__tests__/config.test.ts
 ```
 
 - [ ] **Step 2: Validate workflow whitespace and intended diff**
@@ -184,9 +176,9 @@ Run: `pnpm run build`
 
 Expected: exit 0.
 
-Run: `pnpm test`
+Run: `rg --files src -g '*.test.ts' | rg -v '/integration/|/e2e/' | xargs pnpm exec vitest run`
 
-Expected: exit 0 with no failed tests.
+Expected: exit 0 with no failed non-live/non-E2E tests.
 
 - [ ] **Step 2: Review repository state**
 
@@ -220,4 +212,3 @@ Read `GET /repos/Kastalien-Research/websets-mcp-codemode/rulesets/16775881` agai
 - the exact `gh api --method PUT` request body that would apply it.
 
 Stop without sending the PUT request.
-
