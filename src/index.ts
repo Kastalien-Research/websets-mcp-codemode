@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createServer } from "./server.js";
+import { resolveExaApiKey } from "./config.js";
 import { devWorkflowsEnabled } from "./workflows/types.js";
 
 const defaultCompatModeRaw = process.env.MANAGE_WEBSETS_DEFAULT_COMPAT_MODE;
@@ -29,6 +30,16 @@ if (devWorkflowsEnabled()) {
     + 'semantic.cron.replay) are registered. They inject synthetic events into the '
     + 'live event bus (persist + receiver rules + SSE). Do not enable in production.',
   );
+}
+
+let exaApiKey: string;
+try {
+  const resolved = resolveExaApiKey(process.env);
+  exaApiKey = resolved.apiKey;
+  if (resolved.warning) console.warn(resolved.warning);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
 }
 
 const { app } = createServer({
