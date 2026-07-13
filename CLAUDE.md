@@ -55,3 +55,5 @@ Do not use curl to verify behavior. Use the MCP `execute` tool with `callOperati
 - Prefer removing stale local assistant scaffolding over preserving broken historical flows.
 - For the load-bearing skill during this refactor, use
   `/workspaces/openchatwidget/.agents/skills/code-mode-servers/SKILL.md`.
+- Make illegal states unrepresentable in development.
+- Where illegal states cannot be made unrepresentable (i.e. LLM-reported measurements, etc.), make deterministic code assert on the state where illegality is representable to verify its legality.

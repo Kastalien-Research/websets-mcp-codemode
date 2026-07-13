@@ -25,3 +25,5 @@ npm test
 - Remove stale agent scaffolding instead of trying to preserve historical prompts.
 - Avoid introducing new packaging or publish assumptions until a non-Docker path is
   intentionally designed.
+- Make illegal states unrepresentable in development.
+- Where illegal states cannot be made unrepresentable (i.e. LLM-reported measurements, etc.), make deterministic code assert on the state where illegality is representable to verify its legality.
