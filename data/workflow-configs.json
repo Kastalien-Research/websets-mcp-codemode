@@ -1,5 +1,26 @@
 {
   "routes": {
+    "airtable-sourcing-requests": {
+      "name": "Recruiter Sourcing Demo — Airtable form intake",
+      "channel": "airtable-poll",
+      "match": {
+        "event_type": "sourcing-request.new",
+        "base_id": "appPc1q7cXkdGVgxC",
+        "table_id": "tbl0UwSmwQ4RiGlnY"
+      },
+      "on": {
+        "sourcing-request.new": {
+          "steps": ["airtable-mark-sourcing", "run-source-candidates", "airtable-deliver-results"],
+          "params": {
+            "base_id": "appPc1q7cXkdGVgxC",
+            "table_id": "tbl0UwSmwQ4RiGlnY",
+            "results_field_id": "fldNYJg7lMVYxkrPx",
+            "count_default": 25
+          }
+        }
+      },
+      "notes": "Events come from the session-side poll loop (or, later, the effect-airtable-mcp webhook-poller channel) watching for records with Status=New. Event payload must carry: record_id, role_url, candidate_notes, count, requester_email. Email delivery is Airtable-side (automation on Status=Done) — no email step here."
+    },
     "model-drift-monitor": {
       "name": "Model behavior drift monitor — fire alert",
       "channel": "websets-channel",
@@ -120,6 +141,35 @@
       "description": "Annotate a webset item in the local store with judgment, tag, note, or research finding.",
       "type": "server-workflow",
       "workflow": "store.annotate"
+    },
+    "airtable-mark-sourcing": {
+      "description": "Flip the intake record to Status=Sourcing so the poll loop never double-dispatches it. Run this FIRST, before any long-running work.",
+      "type": "mcp-execute",
+      "server": "airtable-effect",
+      "params_template": {
+        "operation": "update_record",
+        "base_id": "{{base_id}}",
+        "table_name": "{{table_id}}",
+        "record_id": "{{record_id}}",
+        "fields": { "Status": "Sourcing" }
+      }
+    },
+    "run-source-candidates": {
+      "description": "Run the source-candidates intake per .claude/skills/source-candidates-workflow/SKILL.md: fetch the JD from {{role_url}} via exa.getContents (WebFetch fallback), compose the candidate spec from {{candidate_notes}}, then launch the NAMED workflow. On intake failure (dead URL, non-JD page), skip to airtable-deliver-results in failure mode with the reason.",
+      "type": "local-workflow",
+      "workflow": "source-candidates",
+      "params_template": { "role": "{{jd_text}}", "candidate": "{{candidate_spec}}", "count": "{{count}}" }
+    },
+    "airtable-deliver-results": {
+      "description": "Close out the intake record from the workflow's return value. Success: upload csvPath via `node .claude/scripts/airtable-upload-attachment.mjs --base {{base_id}} --record {{record_id}} --field {{results_field_id}} --file <csvPath>` (optionally the report too), verify with an independent get_record that filename+size match the local file exactly (deterministic check, per no-self-graded-verification), then update_record: Status=Done, Report=workflow report text, Webset ID=websetId. Failure (csvWritten:false, workflow error, or intake failure): update_record Status=Failed, Report=what happened. The Airtable automation on Status=Done sends the requester email — this step never sends email itself.",
+      "type": "script+mcp-execute",
+      "server": "airtable-effect",
+      "params_template": {
+        "base_id": "{{base_id}}",
+        "table_name": "{{table_id}}",
+        "record_id": "{{record_id}}",
+        "results_field_id": "{{results_field_id}}"
+      }
     },
     "airtable-upsert": {
       "description": "Write or update records in an Airtable table.",
