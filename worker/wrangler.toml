@@ -1,0 +1,15 @@
+name = "websets-webhook-buffer"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+
+# Public ingest endpoint for Exa webhook deliveries. Durable replacement for the
+# ephemeral trycloudflare quick tunnel.
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "websets-webhook-buffer"
+database_id = "1e71502c-8e6c-4131-8c37-ecb69680a0c0"
+
+# PULL_TOKEN is set as a secret, not here:
+#   wrangler secret put PULL_TOKEN

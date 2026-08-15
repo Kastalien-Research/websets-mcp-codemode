@@ -2,6 +2,7 @@
 import { createServer } from "./server.js";
 import { resolveExaApiKey } from "./config.js";
 import { devWorkflowsEnabled } from "./workflows/types.js";
+import { startWebhookPuller } from "./webhooks/puller.js";
 
 const defaultCompatModeRaw = process.env.MANAGE_WEBSETS_DEFAULT_COMPAT_MODE;
 const defaultCompatMode = defaultCompatModeRaw === 'safe' ? 'safe' : 'strict';
@@ -54,3 +55,23 @@ app.listen(PORT, () => {
   console.log(`Websets MCP Server running on port ${PORT}`);
   console.log(`Endpoint: http://localhost:${PORT}/mcp`);
 });
+
+// Optional durable ingest path: pull buffered deliveries from the Cloudflare
+// Worker instead of relying on this box being publicly reachable. Both paths can
+// run at once — POST /webhooks/exa stays live for direct delivery.
+const bufferUrl = process.env.WEBHOOK_BUFFER_URL;
+const pullToken = process.env.WEBHOOK_BUFFER_TOKEN;
+if (bufferUrl && pullToken) {
+  const pollMsRaw = Number(process.env.WEBHOOK_BUFFER_POLL_MS);
+  startWebhookPuller({
+    bufferUrl,
+    pullToken,
+    pollMs: Number.isFinite(pollMsRaw) && pollMsRaw > 0 ? pollMsRaw : undefined,
+    envSecret: process.env.EXA_WEBHOOK_SECRET,
+  });
+} else if (bufferUrl || pullToken) {
+  console.warn(
+    'NOTE: webhook buffer puller not started — WEBHOOK_BUFFER_URL and '
+    + 'WEBHOOK_BUFFER_TOKEN must both be set.',
+  );
+}

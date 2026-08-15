@@ -1,0 +1,13 @@
+{
+  "name": "websets-webhook-buffer",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250801.0",
+    "wrangler": "^4.123.0"
+  }
+}
