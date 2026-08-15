@@ -18,6 +18,7 @@ import * as exaSearch from '../handlers/exa.js';
 import * as github from '../handlers/github.js';
 import * as teams from '../handlers/teams.js';
 import * as yelp from '../handlers/yelp.js';
+import * as perplexity from '../handlers/perplexity.js';
 import * as connect from '../handlers/connect.js';
 import * as store from '../store/operations.js';
 import * as notebook from '../handlers/notebook.js';
@@ -136,6 +137,8 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'yelp.match': { handler: yelp.match, summary: 'Match a business on Yelp by name and address' },
   'yelp.details': { handler: yelp.details, summary: 'Get full Yelp business details by id or alias' },
   'yelp.reviews': { handler: yelp.reviews, summary: 'Get Yelp review excerpts for a business' },
+  'perplexity.ask': { handler: perplexity.ask, summary: 'Ask Perplexity Sonar (cited web answer + usage-based cost estimate) — independent cross-check engine for Exa-derived claims' },
+  'perplexity.verifyPerson': { handler: perplexity.verifyPerson, summary: 'Perplexity person-verification workflow: employer/title/discipline/profiles with citations, optional claim-by-claim check. Returns prose + citations; caller grades.' },
   'notebook.create': { handler: notebook.create, summary: 'Create a thesis notebook (.src.md) — durable, re-runnable Code Mode artifact' },
   'notebook.get': { handler: notebook.get, summary: 'Get a thesis notebook: decoded cells, manifest, and verdict run history' },
   'notebook.appendCell': { handler: notebook.appendCellOp, summary: 'Append a markdown or code cell to a thesis notebook' },
@@ -245,6 +248,8 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'yelp.match': yelp.Schemas.match,
   'yelp.details': yelp.Schemas.details,
   'yelp.reviews': yelp.Schemas.reviews,
+  'perplexity.ask': perplexity.Schemas.ask,
+  'perplexity.verifyPerson': perplexity.Schemas.verifyPerson,
   'notebook.create': notebook.Schemas.create,
   'notebook.get': notebook.Schemas.get,
   'notebook.appendCell': notebook.Schemas.appendCell,
