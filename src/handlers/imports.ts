@@ -10,7 +10,11 @@ export const Schemas = {
     count: z.number(),
     size: z.number(),
     title: z.string().optional(),
-    csv: z.string().optional(),
+    // Matches the SDK: csv-specific parameters, NOT the file content. The file
+    // itself is PUT to the returned uploadUrl. identifier = zero-based column
+    // index of the entity key (URL, Name, ...); omitting it makes Exa infer,
+    // which failed on the 2026-08-14 roster imports.
+    csv: z.object({ identifier: z.number().optional() }).optional(),
     metadata: z.record(z.string()).optional(),
   }),
   get: z.object({

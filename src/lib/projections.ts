@@ -246,6 +246,12 @@ export function projectImport(imp: Record<string, unknown>): Record<string, unkn
     title: imp.title ?? null,
     metadata: imp.metadata ?? null,
     failedReason: imp.failedReason ?? null,
+    // Create responses carry a presigned uploadUrl the caller must PUT the file
+    // to before uploadValidUntil; without these fields an imports.create can
+    // never be completed through this surface (the 2026-08-14 roster imports
+    // all failed for exactly this reason).
+    uploadUrl: imp.uploadUrl ?? null,
+    uploadValidUntil: imp.uploadValidUntil ?? null,
   };
 }
 
