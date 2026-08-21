@@ -140,6 +140,14 @@ resource "google_cloud_run_v2_service" "websets_mcp" {
       }
 
       dynamic "env" {
+        for_each = var.seed_gcs_url != "" ? [var.seed_gcs_url] : []
+        content {
+          name  = "WEBSETS_SEED_GCS_URL"
+          value = env.value
+        }
+      }
+
+      dynamic "env" {
         for_each = google_secret_manager_secret.app
         content {
           name = env.key

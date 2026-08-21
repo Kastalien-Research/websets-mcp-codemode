@@ -26,6 +26,12 @@ variable "webhook_buffer_url" {
   default     = ""
 }
 
+variable "seed_gcs_url" {
+  type        = string
+  description = "Optional GCS JSON-API media URL of a SQLite seed file. Entrypoint downloads it on first boot only when the Litestream replica is empty."
+  default     = ""
+}
+
 variable "invoker_members" {
   type        = list(string)
   description = "IAM members granted roles/run.invoker (e.g. user:you@example.com, serviceAccount:...)"
