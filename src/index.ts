@@ -3,6 +3,12 @@ import { createServer } from "./server.js";
 import { resolveExaApiKey } from "./config.js";
 import { devWorkflowsEnabled } from "./workflows/types.js";
 import { startWebhookPuller } from "./webhooks/puller.js";
+import { getDb } from "./store/db.js";
+
+// Open the shadow store eagerly so the SQLite file + WAL exist from boot.
+// Litestream (Cloud Run) blocks replication until the db file is initialized;
+// lazy-on-first-use would leave a fresh instance unreplicated indefinitely.
+getDb();
 
 const defaultCompatModeRaw = process.env.MANAGE_WEBSETS_DEFAULT_COMPAT_MODE;
 const defaultCompatMode = defaultCompatModeRaw === 'safe' ? 'safe' : 'strict';
