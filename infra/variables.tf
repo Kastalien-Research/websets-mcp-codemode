@@ -20,6 +20,12 @@ variable "secret_env_keys" {
   default     = ["EXA_API_KEY"]
 }
 
+variable "webhook_buffer_url" {
+  type        = string
+  description = "Cloudflare Worker webhook buffer URL. When set, the Cloud Run instance runs the puller and owns event ingestion — make sure no local instance is also pulling."
+  default     = ""
+}
+
 variable "invoker_members" {
   type        = list(string)
   description = "IAM members granted roles/run.invoker (e.g. user:you@example.com, serviceAccount:...)"
