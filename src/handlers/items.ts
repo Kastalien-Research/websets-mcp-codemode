@@ -94,7 +94,12 @@ export const list: OperationHandler = async (args, exa) => {
     if (Array.isArray(items)) {
       const ingested = args.ingest ? ingestRawItems(items, args.websetId as string) : 0;
       const projected = filterAndProjectItems(items);
-      return successResult({ ...projected, cursor: (response as any).cursor ?? null, ingested });
+      return successResult({
+        ...projected,
+        hasMore: (response as any).hasMore ?? false,
+        nextCursor: (response as any).nextCursor ?? null,
+        ingested,
+      });
     }
     return successResult(response);
   } catch (error) {
