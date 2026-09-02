@@ -92,9 +92,30 @@ export const list: OperationHandler = async (args, exa) => {
     });
     const items = (response as any).data ?? response;
     if (Array.isArray(items)) {
+      const hasMore = (response as any).hasMore;
+      const nextCursor = (response as any).nextCursor;
+      // The SDK's ListWebsetItemResponse always carries `hasMore`/`nextCursor`.
+      // Defaulting a missing/malformed field to `false`/`null` would silently
+      // fabricate a terminal page and reproduce the truncation bug this fixes
+      // (see PR discussion) — so an illegal response is rejected, not guessed at.
+      if (typeof hasMore !== 'boolean') {
+        throw new Error(
+          `items.list: SDK response missing/invalid 'hasMore' (got ${typeof hasMore}); refusing to guess pagination state`,
+        );
+      }
+      if (hasMore && typeof nextCursor !== 'string') {
+        throw new Error(
+          `items.list: SDK response has hasMore=true but 'nextCursor' is not a string (got ${typeof nextCursor}); cannot continue pagination`,
+        );
+      }
       const ingested = args.ingest ? ingestRawItems(items, args.websetId as string) : 0;
       const projected = filterAndProjectItems(items);
-      return successResult({ ...projected, cursor: (response as any).cursor ?? null, ingested });
+      return successResult({
+        ...projected,
+        hasMore,
+        nextCursor: nextCursor ?? null,
+        ingested,
+      });
     }
     return successResult(response);
   } catch (error) {
