@@ -35,4 +35,18 @@ describe('items.list pagination passthrough', () => {
     expect(data.hasMore).toBe(false);
     expect(data.nextCursor).toBeNull();
   });
+
+  it('rejects a response missing hasMore instead of defaulting to false', async () => {
+    const exa = mockExa({ data: [rawItem], nextCursor: 'cursor_abc' });
+    const result = await list({ websetId: 'ws_1' }, exa);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('hasMore');
+  });
+
+  it('rejects hasMore=true with a missing/non-string nextCursor instead of defaulting to null', async () => {
+    const exa = mockExa({ data: [rawItem], hasMore: true, nextCursor: null });
+    const result = await list({ websetId: 'ws_1' }, exa);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('nextCursor');
+  });
 });
