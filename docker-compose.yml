@@ -6,9 +6,13 @@ services:
     environment:
       - EXA_API_KEY=${EXA_API_KEY}
       - YELP_API_KEY=${YELP_API_KEY:-}
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - PORT=7860
       - WEBSETS_PUBLIC_URL=${WEBSETS_PUBLIC_URL:-}
+      # Webhook buffer vars are deliberately NOT passed: the Cloud Run
+      # instance owns ingestion (infra/terraform.tfvars webhook_buffer_url).
+      # Two pullers would race for the same buffered events.
     volumes:
       - ./data:/app/data
     healthcheck:

@@ -1,0 +1,15 @@
+{
+  "name": "websets-webhook-buffer",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "migrate:remote": "wrangler d1 migrations apply websets-webhook-buffer --remote",
+    "migrate:local": "wrangler d1 migrations apply websets-webhook-buffer --local"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250801.0",
+    "wrangler": "^4.123.0"
+  }
+}

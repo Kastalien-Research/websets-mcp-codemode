@@ -23,6 +23,7 @@
     "build": "tsc && chmod +x dist/index.js",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
+    "pplx": "node dist/cli/pplx.js",
     "dev": "tsc --watch & nodemon dist/index.js",
     "inspector": "pnpm dlx @modelcontextprotocol/inspector dist/index.js",
     "test": "vitest run",
