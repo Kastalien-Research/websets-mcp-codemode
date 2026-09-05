@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { WORKFLOW_SCHEMAS } from '../schemas.js';
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import {
   registerDevWorkflow,
@@ -12,6 +14,7 @@ describe('registerDevWorkflow gating', () => {
   const testType = 'test.dev.gated';
 
   beforeEach(() => {
+    WORKFLOW_SCHEMAS[testType] = z.object({});
     workflowRegistry.delete(testType);
   });
 
@@ -19,6 +22,7 @@ describe('registerDevWorkflow gating', () => {
     if (original === undefined) delete process.env.WEBSETS_ENABLE_DEV_WORKFLOWS;
     else process.env.WEBSETS_ENABLE_DEV_WORKFLOWS = original;
     workflowRegistry.delete(testType);
+    delete WORKFLOW_SCHEMAS[testType];
   });
 
   it('registers a dev workflow when WEBSETS_ENABLE_DEV_WORKFLOWS=1', () => {
@@ -26,6 +30,13 @@ describe('registerDevWorkflow gating', () => {
     expect(devWorkflowsEnabled()).toBe(true);
     registerDevWorkflow(testType, noop);
     expect(workflowRegistry.has(testType)).toBe(true);
+  });
+
+  it('rejects an enabled dev workflow without an authoritative schema', () => {
+    process.env.WEBSETS_ENABLE_DEV_WORKFLOWS = '1';
+    delete WORKFLOW_SCHEMAS[testType];
+    expect(() => registerDevWorkflow(testType, noop)).toThrow('no argument schema');
+    expect(workflowRegistry.has(testType)).toBe(false);
   });
 
   it('skips registration when the flag is unset', () => {

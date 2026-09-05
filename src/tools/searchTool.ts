@@ -1,13 +1,11 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { OPERATIONS } from './operations.js';
 import { searchCatalog } from './catalog.js';
 import { workflowMetadata } from '../workflows/types.js';
 import type { ResourceLinkContent } from '../handlers/types.js';
 
-const DOMAINS = [
-  'websets', 'searches', 'items', 'enrichments', 'monitors',
-  'webhooks', 'imports', 'events', 'tasks', 'research', 'agentRuns', 'exa', 'workflow',
-] as const;
+export const DOMAINS = [...new Set([...Object.keys(OPERATIONS).map(name => name.split('.')[0]), 'workflow'])] as [string, ...string[]];
 
 const inputSchema = z.object({
   query: z.string().describe('Search query: keyword, domain name, or description'),

@@ -86,7 +86,7 @@ Find available API operations by keyword, domain, or pattern. Use before writing
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `query` | string | required | Keyword, domain name, or description |
-| `detail` | `"brief"` \| `"detailed"` \| `"full"` | `"brief"` | Schema detail level |
+| `detail` | `"brief"` \| `"detailed"` \| `"full"` | `"detailed"` | Schema detail level |
 | `domain` | string | — | Filter to a domain |
 | `limit` | number | 10 | Max results |
 
@@ -96,7 +96,7 @@ Execute JavaScript with `callOperation(name, args)` and an authenticated `exa` S
 
 ```json
 {
-  "code": "const ws = await callOperation('websets.create', { search: { query: 'AI startups', entity: { type: 'company' }, count: 10 } });\nawait callOperation('websets.waitUntilIdle', { id: ws.id });\nreturn await callOperation('items.getAll', { websetId: ws.id });",
+  "code": "const ws = await callOperation('websets.create', { searchQuery: 'AI startups', entity: { type: 'company' }, searchCount: 10 });\nawait callOperation('websets.waitUntilIdle', { id: ws.id });\nreturn await callOperation('items.getAll', { websetId: ws.id });",
   "timeout": 60000
 }
 ```
@@ -108,6 +108,24 @@ Sandbox globals:
 ### `status` — Account overview
 
 Returns current account state: webset counts by status, running tasks, active monitors, and server capabilities. Call this first to orient.
+
+### Provider inputs and compact results
+
+Custom entities require `{ type: "custom", description: "what to find" }` in Webset create/preview, search create, and import create. The same entity schema is used for all four operations.
+
+`imports.create` accepts `format: "csv"` and optional `csv: { identifier: 1 }`, and preserves `uploadUrl` and `uploadValidUntil`. The host uploads the CSV to that URL before expiry, then inspects `imports.get` or waits with `imports.waitUntilCompleted`. Creating the import does not upload the file; this server supplies the handoff, with no separate upload service. See [Exa's import contract](https://exa.ai/docs/websets/api/imports/create-an-import).
+
+`searches.*` responses retain the requested count, parent Webset ID, timestamps, and provider `recall` unchanged. Recall values are estimates. Webset responses preserve `dashboardUrl` (and `url` when supplied) and explicitly expanded `items`; expanded items are raw provider payloads with no implicit filtering. Compact items retain parent IDs, timestamps, evaluation values (including `unclear`), and enrichment statuses. Use `items.get` for full evidence, including reasoning and references.
+
+Bulk reads (`items.list` and `items.getAll`) accept `evaluationPolicy`:
+
+| Policy | Included rows |
+|--------|---------------|
+| `any` (default) | At least one `yes` evaluation |
+| `all` | Every reported evaluation is `yes` |
+| `none` | Every row, including negative and unclear evaluations |
+
+Empty evaluations are included under every policy. `total`, `included`, and `excluded` describe the fetched rows, page-local for `items.list`. Provider `hasMore` and `nextCursor` remain independent of filtering: continue even when a page has zero matches. `items.getAll.maxItems` caps fetched rows before filtering.
 
 ## Workflows
 
@@ -121,7 +139,9 @@ const result = await callOperation('tasks.get', { taskId: t.taskId });
 await callOperation('tasks.cancel', { taskId: t.taskId });
 ```
 
-Tasks transition `pending` → `working` → `completed` / `failed` / `cancelled`. The `args` shape depends on the workflow `type`. Use `search` with `domain: "tasks"` or `search: "workflow"` to discover what each accepts.
+Tasks transition `pending` → `working` → `completed` / `failed` / `cancelled`. Terminal status, timestamps, and expiry are immutable, including after late workflow progress or completion. Cancellation records local task state; it does not confirm provider cancellation. `tasks.list` accepts `working`, with `running` retained as an input alias.
+
+Each registered workflow has an authoritative argument schema used for discovery, parameter docs, and validation before task creation or provider dispatch. Nested `args` and flattened arguments remain supported. Use `search` with `domain: "workflow"` and `detail: "full"`, or its linked workflow resource, to inspect the contract. Domains are derived from the registry. JSON Schema preserves representable constraints; custom refinements remain runtime checks and are described in the workflow contract.
 
 Registered workflows:
 
@@ -136,6 +156,8 @@ Registered workflows:
 | `retrieval.verifiedAnswer` | Answer a question with verification against retrieved sources. |
 | `verify.enrichments` | Verify enrichment values against external sources (uses `GITHUB_TOKEN` for GitHub-derived enrichments). |
 | `lifecycle.harvest` | Harvest items + enrichments at the end of a webset's lifecycle. |
+| `connect.enrich` | Attach external results only to uniquely matched input IDs; unmatched and duplicate output IDs are reported. |
+| `thesis.investigate` | Record source-domain retrieval statistics and query results in a notebook. |
 | `echo` | Trivial workflow used for harness testing. |
 
 ### `semantic.cron`
@@ -147,7 +169,7 @@ Config shape (high level):
 - `name` (recommended): used for snapshot persistence, delta computation, and replay. A run with no `name` skips persistence and warns at validate time.
 - `lenses`: array of `{ id, source: { query, entity?, criteria?, enrichments?, count? } }`. Each lens becomes one webset.
 - `shapes`: array of `{ lensId, conditions, logic }`. Predicates over enrichment values; items must pass at least one shape per lens to qualify.
-- `join`: `{ by, minLensOverlap?, temporal?, entityMatch?, keyEnrichment? }`. Modes: `entity`, `entity+temporal`, `cooccurrence`, `temporal`. Entity modes use Dice-coefficient fuzzy name matching with optional `keyEnrichment`-keyed bucketing.
+- `join`: `{ by, minLensOverlap?, temporal?, entityMatch?, keyEnrichment? }`. Modes: `entity`, `entity+temporal`, `cooccurrence`, `temporal`. `entityMatch: { method: "exact" }` uses case-insensitive exact names or exact enrichment keys; URLs remain exact. Fuzzy mode uses Dice-coefficient name matching.
 - `signal`: `{ requires: { type, min?, sufficient? } }`. Types: `all`, `any`, `threshold`, `combination`. Validate-time rejects degenerate combinations (e.g. 1-lens with type `all` is vacuous).
 - `monitor` (optional): `{ cron, timezone }` to register an Exa-side cron schedule for auto-rerun.
 
@@ -157,6 +179,14 @@ On each run, the workflow persists a snapshot to SQLite (keyed by `config.name`)
 - `semantic-cron.signal-resolved` — true→false
 
 `tasks.get` returns the snapshot at the end of the run. Re-evaluation runs (`existingWebsets` arg supplied) compute a delta against the previous snapshot.
+
+Temporal conditions must qualify within one common inclusive window; memberships from separate windows cannot jointly satisfy a signal. Qualifying windows retain item IDs and timestamps as witnesses, and final entities are deduplicated. Missing or invalid timestamps cannot qualify. These timestamps are provider item-creation times, not proof of when a real-world event occurred.
+
+### Thesis notebooks
+
+`thesis.investigate` returns `retrievalBalance` (`thesis-heavy`, `antithesis-heavy`, `mixed`, or `sparse`), `retrievalScore`, `thesisQueryDomains`, `antithesisQueryDomains`, and `thesisQueryShare`. These are source-domain retrieval statistics, not factual verdicts or calibrated confidence. The score retains the previous arithmetic: `clamp((distinct domains / requested count) * abs(thesisQueryShare - 0.5) * 2, 0, 1)`.
+
+New generated runs use `kind: "retrieval"` and query-side result lists. Legacy verdict/confidence runs remain readable and unchanged. The notebook index adds `latest_run_kind`, `latest_retrieval_balance`, and `latest_retrieval_score`; a latest retrieval run clears stale legacy latest-verdict/confidence values. `notebook.list` returns both kinds, while its optional `verdict` filter applies to latest legacy runs. The index upgrade is additive and preserves historical run files.
 
 ## Webhook Receiver
 
@@ -186,7 +216,9 @@ On each incoming POST to `/webhooks/exa`, the receiver:
 
 ### Event Delivery
 
-The receiver currently has **one opinionated downstream consumer: the Claude Code channel bridge** at `src/channel.ts`. The bridge is a separate stdio MCP process that long-polls `GET /webhooks/events`, dedupes by event id (60s window), coalesces per-item enrichment notifications (5s window), filters by `data/channel-config.json`, and emits `notifications/claude/channel` notifications into a connected Claude Code session.
+The receiver currently has **one opinionated downstream consumer: the Claude Code channel bridge** at `src/channel.ts`. The bridge is a separate stdio MCP process that long-polls `GET /webhooks/events`, dedupes by event id (60s window), coalesces per-item notifications after a quiet interval (60s by default; `CHANNEL_ITEM_COALESCE_MS` overrides it), filters by `data/channel-config.json`, and emits `notifications/claude/channel` notifications into a connected Claude Code session.
+
+Item events carry server-resolved `expectedEnrichmentIds`. `webset.item.ready` requires valid item identity and evaluations, no `no` evaluation, and a `completed` result for every expected enrichment ID. `unclear` remains eligible for later verification. Failed lookups, missing definitions, pending/failed results, and incomplete payloads do not become ready; confirmed empty definitions require no enrichment work. Explicitly enabled raw `webset.item.created`/`webset.item.enriched` events remain available when readiness fails. A quiet interval describes the latest observed state and does not make it immutable.
 
 **For non-Claude-Code consumers** (DeepAgents, custom MCP clients, anything connected at `/mcp`):
 
@@ -212,6 +244,19 @@ pnpm start
 ```
 
 For iterative development, Docker remains the primary runtime. Local Node is for fast feedback while editing the server itself.
+
+To verify the bounded correctness contracts without provider access:
+
+```bash
+pnpm exec tsc --noEmit
+pnpm exec vitest run --exclude '**/{integration,e2e}/**'
+docker build -t websets-correctness .
+docker run --rm --network none --tmpfs /app/data \
+  -v "$PWD/scripts/correctness-smoke.mjs:/app/scripts/correctness-smoke.mjs:ro" \
+  websets-correctness node /app/scripts/correctness-smoke.mjs
+```
+
+The smoke test boots the built production entry point, connects over HTTP/MCP, and replaces provider HTTP responses with deterministic fixtures. SQLite and notebooks use temporary container storage. It exercises discovery, the published example, provider-field preservation, filtering/pagination, and mixed notebook histories.
 
 ## Compatibility Mode
 

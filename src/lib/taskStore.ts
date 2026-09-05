@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-export type TaskStatus = 'pending' | 'working' | 'completed' | 'failed' | 'cancelled';
+export const TASK_STATUSES = ['pending', 'working', 'completed', 'failed', 'cancelled'] as const;
+export type TaskStatus = typeof TASK_STATUSES[number];
+
+export function isTerminalTaskStatus(status: TaskStatus): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
 
 export interface TaskProgress {
   step: string;
@@ -82,45 +87,34 @@ export class TaskStore {
   }
 
   updateProgress(id: string, progress: TaskProgress): void {
-    const task = this.tasks.get(id);
-    if (!task) return;
-    task.status = 'working';
-    task.progress = progress;
-    task.updatedAt = new Date().toISOString();
+    this.updateActive(id, { status: 'working', progress });
   }
 
   setResult(id: string, result: unknown): void {
-    const task = this.tasks.get(id);
-    if (!task) return;
-    task.status = 'completed';
-    task.result = result;
-    task.updatedAt = new Date().toISOString();
-    task.expiresAt = new Date(Date.now() + this.ttlMs).toISOString();
+    this.updateActive(id, { status: 'completed', result });
   }
 
   setPartialResult(id: string, partial: unknown): void {
-    const task = this.tasks.get(id);
-    if (!task) return;
-    task.partialResult = partial;
-    task.updatedAt = new Date().toISOString();
+    this.updateActive(id, { partialResult: partial });
   }
 
   setError(id: string, error: TaskError): void {
-    const task = this.tasks.get(id);
-    if (!task) return;
-    task.status = 'failed';
-    task.error = error;
-    task.updatedAt = new Date().toISOString();
-    task.expiresAt = new Date(Date.now() + this.ttlMs).toISOString();
+    this.updateActive(id, { status: 'failed', error });
   }
 
   cancel(id: string): boolean {
+    return this.updateActive(id, { status: 'cancelled' });
+  }
+
+  /** The single write gate: terminal tasks keep their state, receipts, and expiry. */
+  private updateActive(id: string, changes: Partial<Pick<TaskState, 'status' | 'progress' | 'result' | 'error' | 'partialResult'>>): boolean {
     const task = this.tasks.get(id);
-    if (!task) return false;
-    if (task.status === 'completed' || task.status === 'failed') return false;
-    task.status = 'cancelled';
-    task.updatedAt = new Date().toISOString();
-    task.expiresAt = new Date(Date.now() + this.ttlMs).toISOString();
+    if (!task || isTerminalTaskStatus(task.status)) return false;
+    const now = Date.now();
+    Object.assign(task, changes, { updatedAt: new Date(now).toISOString() });
+    if (isTerminalTaskStatus(task.status)) {
+      task.expiresAt = new Date(now + this.ttlMs).toISOString();
+    }
     return true;
   }
 

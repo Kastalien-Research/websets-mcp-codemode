@@ -1,3 +1,5 @@
+import { validateSemanticConfig } from './semanticValidation.js';
+import { expandTemplates } from './templates.js';
 import type { Exa } from 'exa-js';
 import type { TaskStore } from '../lib/taskStore.js';
 import { registerWorkflow, registerDevWorkflow, type WorkflowMeta } from './types.js';
@@ -108,9 +110,14 @@ interface JoinedEntity {
   presentInLenses: string[];
   lensCount: number;
   shapes: Record<string, Record<string, unknown>>; // lensId → enrichment values
+  witnesses?: TemporalWitness[];
 }
 
+interface TemporalWitness { lensId: string; itemId: string; createdAt: string; timestampSource: 'provider item-creation time' }
+interface TemporalWindow { start: string; end: string; witnesses: TemporalWitness[]; entities: JoinedEntity[]; lensesWithEvidence: string[] }
+
 export interface JoinResult {
+  windows?: TemporalWindow[];
   type: string;
   entities: JoinedEntity[];
   lensesWithEvidence: string[];
@@ -155,27 +162,7 @@ interface Delta {
 
 // --- 1. Template Expander ---
 
-export function expandTemplates(
-  config: SemanticCronConfig,
-  variables: Record<string, string>,
-): SemanticCronConfig {
-  const json = JSON.stringify(config);
-  let expanded = json;
-  for (const [key, value] of Object.entries(variables)) {
-    expanded = expanded.replaceAll(`{{${key}}}`, value);
-  }
-
-  // Check for unresolved templates
-  const unresolved = expanded.match(/\{\{[^}]+\}\}/g);
-  if (unresolved) {
-    throw new WorkflowError(
-      `Unresolved template variables: ${[...new Set(unresolved)].join(', ')}`,
-      'validate',
-    );
-  }
-
-  return JSON.parse(expanded) as SemanticCronConfig;
-}
+export { expandTemplates } from './templates.js';
 
 // --- 2. Enrichment Resolver + Shape Evaluator ---
 
@@ -308,21 +295,57 @@ function normalizeEnrichmentKey(raw: unknown): string | null {
   return null;
 }
 
+/** Accept provider ISO timestamps only after validating their calendar/time components.
+ * Date.parse alone silently normalizes impossible dates such as February 30.
+ */
+function providerItemTime(value: unknown): number {
+  if (typeof value !== 'string') return NaN;
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/i.exec(value);
+  if (!parts) return NaN;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, , offsetHour, offsetMinute] = parts;
+  const year = Number(yearText), month = Number(monthText), day = Number(dayText);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]
+    || Number(hourText) > 23 || Number(minuteText) > 59 || Number(secondText) > 59
+    || (offsetHour !== undefined && (Number(offsetHour) > 23 || Number(offsetMinute) > 59))) return NaN;
+  return Date.parse(value);
+}
+
 export function joinLensResults(
   lensResults: LensResult[],
   joinConfig: JoinConfig,
 ): JoinResult {
+  // Each candidate window is evaluated independently, including entity grouping.
+  // Anchoring at every valid item time finds later clusters and inclusive boundaries.
+  if (joinConfig.temporal || joinConfig.by === 'temporal' || joinConfig.by === 'entity+temporal') {
+    const days = joinConfig.temporal?.days ?? 7;
+    if (!Number.isFinite(days) || days < 0) throw new WorkflowError('temporal days must be nonnegative and finite', 'validate');
+    const windowMs = days * 86400000;
+    const timeOf = (item: ShapedItem) => providerItemTime(item.createdAt);
+    const starts = [...new Set(lensResults.flatMap(l => l.shapedItems.map(timeOf)).filter(Number.isFinite))].sort((a, b) => a - b);
+    const windows: TemporalWindow[] = [];
+    for (const start of starts) {
+      const scoped = lensResults.map(l => ({ ...l, shapedItems: l.shapedItems.filter(item => {
+        const time = timeOf(item);
+        return Number.isFinite(time) && time >= start && time <= start + windowMs;
+      }) }));
+      const entityMode = joinConfig.by === 'entity' || joinConfig.by === 'entity+temporal';
+      const joined = joinLensResults(scoped, { ...joinConfig, temporal: undefined, by: entityMode ? 'entity' : 'cooccurrence' });
+      if (entityMode ? !joined.entities.length : joined.lensesWithEvidence.length < (joinConfig.minLensOverlap ?? (joinConfig.by === 'temporal' ? 2 : 1))) continue;
+      windows.push({ start: new Date(start).toISOString(), end: new Date(start + windowMs).toISOString(),
+        witnesses: scoped.flatMap(l => l.shapedItems.map(item => ({ lensId: l.lensId, itemId: item.id, createdAt: item.createdAt, timestampSource: 'provider item-creation time' as const }))),
+        entities: joined.entities, lensesWithEvidence: joined.lensesWithEvidence });
+    }
+    return { type: joinConfig.by, windows, entities: windows.flatMap(w => w.entities), lensesWithEvidence: [...new Set(windows.flatMap(w => w.lensesWithEvidence))] };
+  }
   const threshold = joinConfig.entityMatch?.nameThreshold ?? 0.85;
   const minOverlap = joinConfig.minLensOverlap ?? 2;
-  const temporalDays = joinConfig.temporal?.days;
 
   if (joinConfig.by === 'cooccurrence') {
-    return joinByCooccurrence(lensResults, temporalDays);
+    return joinByCooccurrence(lensResults);
   }
 
-  if (joinConfig.by === 'temporal') {
-    return joinByTemporal(lensResults, temporalDays ?? 7);
-  }
 
   // Entity or entity+temporal
   const entityMap = new Map<
@@ -332,7 +355,7 @@ export function joinLensResults(
       url: string;
       lenses: Set<string>;
       shapes: Record<string, Record<string, unknown>>;
-      timestamps: Array<{ lensId: string; createdAt: string }>;
+      witnesses: TemporalWitness[];
     }
   >();
 
@@ -363,7 +386,7 @@ export function joinLensResults(
           if (isMatch) {
             existing.lenses.add(lr.lensId);
             existing.shapes[lr.lensId] = si.enrichments;
-            existing.timestamps.push({ lensId: lr.lensId, createdAt: si.createdAt });
+            existing.witnesses.push({ lensId: lr.lensId, itemId: si.id, createdAt: si.createdAt, timestampSource: 'provider item-creation time' });
             matched = true;
             break;
           }
@@ -374,15 +397,15 @@ export function joinLensResults(
         if (si.url && existing.url && si.url === existing.url) {
           existing.lenses.add(lr.lensId);
           existing.shapes[lr.lensId] = si.enrichments;
-          existing.timestamps.push({ lensId: lr.lensId, createdAt: si.createdAt });
+          existing.witnesses.push({ lensId: lr.lensId, itemId: si.id, createdAt: si.createdAt, timestampSource: 'provider item-creation time' });
           matched = true;
           break;
         }
         // Default mode: name fuzzy match
-        if (si.name && existing.entity && diceCoefficient(si.name, existing.entity) > threshold) {
+        if (si.name && existing.entity && (si.name.toLowerCase() === existing.entity.toLowerCase() || (fuzzyEnabled && diceCoefficient(si.name, existing.entity) > threshold))) {
           existing.lenses.add(lr.lensId);
           existing.shapes[lr.lensId] = si.enrichments;
-          existing.timestamps.push({ lensId: lr.lensId, createdAt: si.createdAt });
+          existing.witnesses.push({ lensId: lr.lensId, itemId: si.id, createdAt: si.createdAt, timestampSource: 'provider item-creation time' });
           matched = true;
           break;
         }
@@ -395,7 +418,7 @@ export function joinLensResults(
           url: si.url,
           lenses: new Set([lr.lensId]),
           shapes: { [lr.lensId]: si.enrichments },
-          timestamps: [{ lensId: lr.lensId, createdAt: si.createdAt }],
+          witnesses: [{ lensId: lr.lensId, itemId: si.id, createdAt: si.createdAt, timestampSource: 'provider item-creation time' }],
         });
       }
     }
@@ -407,33 +430,8 @@ export function joinLensResults(
     presentInLenses: [...e.lenses],
     lensCount: e.lenses.size,
     shapes: e.shapes,
+    witnesses: e.witnesses,
   }));
-
-  // entity+temporal: filter by temporal window
-  if (joinConfig.by === 'entity+temporal' && temporalDays) {
-    const windowMs = temporalDays * 86400000;
-    entities = entities.filter(ent => {
-      // Find underlying timestamps from entityMap
-      const entry = [...entityMap.values()].find(
-        e => e.entity === ent.entity && e.url === ent.url,
-      );
-      if (!entry) return false;
-
-      // Check if any two items from different lenses are within window
-      const ts = entry.timestamps;
-      for (let i = 0; i < ts.length; i++) {
-        for (let j = i + 1; j < ts.length; j++) {
-          if (ts[i].lensId !== ts[j].lensId) {
-            const diff = Math.abs(
-              new Date(ts[i].createdAt).getTime() - new Date(ts[j].createdAt).getTime(),
-            );
-            if (diff <= windowMs) return true;
-          }
-        }
-      }
-      return false;
-    });
-  }
 
   // Filter by minLensOverlap
   entities = entities.filter(e => e.lensCount >= minOverlap);
@@ -443,72 +441,8 @@ export function joinLensResults(
   return { type: joinConfig.by, entities, lensesWithEvidence };
 }
 
-function joinByCooccurrence(
-  lensResults: LensResult[],
-  temporalDays?: number,
-): JoinResult {
-  let lensesWithEvidence: string[];
-
-  if (temporalDays) {
-    // Only count lenses whose shaped items fall within the window relative to earliest
-    const allTimestamps: Array<{ lensId: string; time: number }> = [];
-    for (const lr of lensResults) {
-      for (const si of lr.shapedItems) {
-        allTimestamps.push({ lensId: lr.lensId, time: new Date(si.createdAt).getTime() });
-      }
-    }
-
-    if (allTimestamps.length === 0) {
-      return { type: 'cooccurrence', entities: [], lensesWithEvidence: [] };
-    }
-
-    const earliest = Math.min(...allTimestamps.map(t => t.time));
-    const windowMs = temporalDays * 86400000;
-    const qualifying = allTimestamps.filter(t => t.time - earliest <= windowMs);
-    lensesWithEvidence = [...new Set(qualifying.map(t => t.lensId))];
-  } else {
-    lensesWithEvidence = lensResults
-      .filter(lr => lr.shapedItems.length > 0)
-      .map(lr => lr.lensId);
-  }
-
-  return { type: 'cooccurrence', entities: [], lensesWithEvidence };
-}
-
-function joinByTemporal(
-  lensResults: LensResult[],
-  days: number,
-): JoinResult {
-  const windowMs = days * 86400000;
-  const lensTimes = new Map<string, number[]>();
-
-  for (const lr of lensResults) {
-    const times = lr.shapedItems.map(si => new Date(si.createdAt).getTime());
-    if (times.length > 0) {
-      lensTimes.set(lr.lensId, times);
-    }
-  }
-
-  const qualifying = new Set<string>();
-  const lensIds = [...lensTimes.keys()];
-
-  for (let i = 0; i < lensIds.length; i++) {
-    for (let j = i + 1; j < lensIds.length; j++) {
-      const timesA = lensTimes.get(lensIds[i])!;
-      const timesB = lensTimes.get(lensIds[j])!;
-
-      for (const ta of timesA) {
-        for (const tb of timesB) {
-          if (Math.abs(ta - tb) <= windowMs) {
-            qualifying.add(lensIds[i]);
-            qualifying.add(lensIds[j]);
-          }
-        }
-      }
-    }
-  }
-
-  return { type: 'temporal', entities: [], lensesWithEvidence: [...qualifying] };
+function joinByCooccurrence(lensResults: LensResult[]): JoinResult {
+  return { type: 'cooccurrence', entities: [], lensesWithEvidence: lensResults.filter(l => l.shapedItems.length > 0).map(l => l.lensId) };
 }
 
 // --- 4. Signal Evaluator ---
@@ -537,6 +471,15 @@ export function evaluateSignal(
         }
       }
     }
+  }
+
+  if (joinResult.windows) {
+    const results = joinResult.windows.map(window => evaluateSignal({ type: joinResult.type, entities: window.entities, lensesWithEvidence: window.lensesWithEvidence }, signalConfig, allLensIds));
+    const qualifying = results.filter(result => result.fired);
+    return { fired: qualifying.length > 0, rule: signalConfig.requires.type,
+      satisfiedBy: [...new Set(qualifying.flatMap(result => result.satisfiedBy))],
+      entities: [...new Set(qualifying.flatMap(result => result.entities))],
+      ...(qualifying.find(result => result.matchedCombination) ? { matchedCombination: qualifying.find(result => result.matchedCombination)!.matchedCombination } : {}) };
   }
 
   const hasEntities = joinResult.entities.length > 0;
@@ -576,9 +519,8 @@ function evaluateSignalWithEntities(
           combo.every(lensId => e.presentInLenses.includes(lensId)),
         );
         if (matching.length > 0) {
-          matchingEntities = matching;
-          matchedCombo = combo;
-          break;
+          matchingEntities.push(...matching);
+          matchedCombo ??= combo;
         }
       }
       const fired = matchingEntities.length > 0;
@@ -587,7 +529,7 @@ function evaluateSignalWithEntities(
         satisfiedBy: [...new Set(matchingEntities.flatMap(e => e.presentInLenses))],
         rule: type,
         matchedCombination: matchedCombo,
-        entities: matchingEntities.map(e => e.entity),
+        entities: [...new Set(matchingEntities.map(e => e.entity))],
       };
     }
   }
@@ -597,7 +539,7 @@ function evaluateSignalWithEntities(
     fired,
     satisfiedBy: [...new Set(matchingEntities.flatMap(e => e.presentInLenses))],
     rule: type,
-    entities: matchingEntities.map(e => e.entity),
+    entities: [...new Set(matchingEntities.map(e => e.entity))],
   };
 }
 
@@ -874,98 +816,8 @@ async function semanticCronWorkflow(
 
   const config = variables ? expandTemplates(rawConfig, variables) : rawConfig;
 
-  // Validate shape lens IDs reference existing lenses
-  const lensIds = config.lenses.map(l => l.id);
-  for (const shape of config.shapes) {
-    if (!lensIds.includes(shape.lensId)) {
-      throw new WorkflowError(
-        `Shape references unknown lens "${shape.lensId}". Available: ${lensIds.join(', ')}`,
-        'validate',
-      );
-    }
-  }
-
-  // Reject configs whose signal/join math is degenerate for the lens count.
-  // Targeted at the trap where signal type 'all'/'threshold'/'combination' with
-  // a single lens reduces to a vacuous tautology that looks like real cross-lens
-  // correlation but isn't. Signal type 'any' is allowed on 1 lens — that's a
-  // valid "did anything match shape?" use case, not vacuous.
-  const lensCount = config.lenses.length;
-  const sigType = config.signal.requires.type;
-
-  if (lensCount < 2 && (sigType === 'all' || sigType === 'threshold' || sigType === 'combination')) {
-    throw new WorkflowError(
-      `Signal type "${sigType}" requires at least 2 lenses to be meaningful — `
-      + `with 1 lens it trivially fires for every shape match. `
-      + `Either add a second lens or use signal.requires.type "any".`,
-      'validate',
-    );
-  }
-
-  // Join minLensOverlap is only enforced when the join mode actually produces
-  // entities (entity / entity+temporal). cooccurrence and temporal modes return
-  // empty entities and don't use minOverlap.
-  const joinByEntities = config.join.by === 'entity' || config.join.by === 'entity+temporal';
-  if (joinByEntities) {
-    const minOverlap = config.join.minLensOverlap ?? 2;
-    if (minOverlap > lensCount) {
-      throw new WorkflowError(
-        `join.minLensOverlap (${minOverlap}) exceeds lens count (${lensCount}). `
-        + `No entity can ever satisfy this — signal would never fire.`,
-        'validate',
-      );
-    }
-    if (minOverlap < 2 && lensCount >= 2) {
-      throw new WorkflowError(
-        `join.minLensOverlap must be >= 2 when there are multiple lenses. `
-        + `minOverlap=1 makes every single-lens entity satisfy the join, defeating cross-lens correlation.`,
-        'validate',
-      );
-    }
-  }
-
-  if (sigType === 'threshold') {
-    const min = config.signal.requires.min ?? 2;
-    if (min > lensCount) {
-      throw new WorkflowError(
-        `signal.requires.min (${min}) exceeds lens count (${lensCount}). Signal would never fire.`,
-        'validate',
-      );
-    }
-    if (min < 2) {
-      throw new WorkflowError(
-        `signal.requires.min must be >= 2 for threshold signals. min=1 fires for any single-lens match.`,
-        'validate',
-      );
-    }
-  }
-
-  if (sigType === 'combination') {
-    const combos = config.signal.requires.sufficient;
-    if (!combos || combos.length === 0) {
-      throw new WorkflowError(
-        `signal.requires.sufficient must be a non-empty array of lens-id combinations for combination signals.`,
-        'validate',
-      );
-    }
-    for (const combo of combos) {
-      if (!combo || combo.length < 2) {
-        throw new WorkflowError(
-          `Each combination in signal.requires.sufficient must have at least 2 lens IDs. `
-          + `Got: ${JSON.stringify(combo)}`,
-          'validate',
-        );
-      }
-      for (const id of combo) {
-        if (!lensIds.includes(id)) {
-          throw new WorkflowError(
-            `Unknown lens ID "${id}" in signal.requires.sufficient. Available: ${lensIds.join(', ')}`,
-            'validate',
-          );
-        }
-      }
-    }
-  }
+  validateSemanticConfig(config, existingWebsets);
+  const lensIds = config.lenses.map(lens => lens.id);
 
   // config.name is load-bearing for snapshot persistence, delta computation, and
   // replay. Without it, every run looks like a fresh signal-fired transition.
@@ -1239,7 +1091,7 @@ async function semanticCronWorkflow(
           url: (projected.url as string) ?? '',
           entityType: (projected.entityType as string) ?? '',
           enrichments: enrichmentValues,
-          createdAt: (item.createdAt as string) ?? new Date().toISOString(),
+          createdAt: typeof item.createdAt === 'string' ? item.createdAt : '', // Provider item-creation time; never substitute evaluation time.
           projected,
         });
       }

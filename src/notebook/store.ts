@@ -23,15 +23,8 @@ import {
   type NotebookRow,
 } from '../store/db.js';
 
-export interface NotebookRun {
-  timestamp: string;
-  verdict: string;
-  confidence: number;
-  evidenceFor: string[];
-  evidenceAgainst: string[];
-  blindSpots?: string[];
-  websetIds?: string[];
-}
+import { NotebookRunInputSchema, type NotebookRun } from './run.js';
+export type { NotebookRun } from './run.js';
 
 export interface DecodedNotebook {
   slug: string;
@@ -113,9 +106,9 @@ export function createNotebook(opts: { thesis: string; slug?: string }): Decoded
     { type: 'title', text: `Thesis: ${opts.thesis}` },
     { type: 'markdown', text: `${encodeManifest(manifest)}\n\n> ${opts.thesis}\n\nWorking thesis under investigation. Code cells are Code Mode — re-run them to refresh evidence.` },
     { type: 'code', filename: 'package.json', source: '{\n  "dependencies": {}\n}' },
-    { type: 'markdown', text: '## Evidence For\n\n_No evidence gathered yet._' },
-    { type: 'markdown', text: '## Evidence Against\n\n_No evidence gathered yet._' },
-    { type: 'markdown', text: '## Verdict\n\n_No runs yet._' },
+    { type: 'markdown', text: '## Thesis-query results\n\n_No results gathered yet._' },
+    { type: 'markdown', text: '## Antithesis-query results\n\n_No results gathered yet._' },
+    { type: 'markdown', text: '## Runs\n\n_No runs yet._' },
   ];
 
   const filePath = writeFile(slug, meta, cells);
@@ -156,14 +149,20 @@ export function appendCell(slug: string, cell: Cell): DecodedNotebook {
 }
 
 /**
- * Append a `### Run <ts>` section and update the index's latest verdict.
- * This is the typed write-back that makes the verdict queryable.
+ * Append a `### Run <ts>` section and update the index for its tagged run kind.
  */
 export function appendRun(slug: string, run: NotebookRun): DecodedNotebook {
+  // Assert the tagged write contract even for internal workflow callers.
+  NotebookRunInputSchema.parse(run);
   const nb = readNotebook(slug);
-
-  const forList = run.evidenceFor.length ? run.evidenceFor.map(e => `- ${e}`).join('\n') : '_none_';
-  const againstList = run.evidenceAgainst.length ? run.evidenceAgainst.map(e => `- ${e}`).join('\n') : '_none_';
+  const retrieval = run.kind === 'retrieval';
+  const first = retrieval ? run.thesisQueryResults : run.evidenceFor;
+  const second = retrieval ? run.antithesisQueryResults : run.evidenceAgainst;
+  const forList = first.length ? first.map(e => `- ${e}`).join('\n') : '_none_';
+  const againstList = second.length ? second.map(e => `- ${e}`).join('\n') : '_none_';
+  const assessment = retrieval
+    ? `**Retrieval balance:** ${run.retrievalBalance} (retrieval score ${run.retrievalScore.toFixed(2)})\n\nSource-domain retrieval statistics only; this does not establish factual support or calibrated confidence.`
+    : `**Verdict:** ${run.verdict} (confidence ${run.confidence.toFixed(2)})`;
   const blind = run.blindSpots?.length ? `\n\n**Blind spots:**\n${run.blindSpots.map(b => `- ${b}`).join('\n')}` : '';
   const websets = run.websetIds?.length ? `\n\n_Websets: ${run.websetIds.join(', ')}_` : '';
 
@@ -172,9 +171,9 @@ export function appendRun(slug: string, run: NotebookRun): DecodedNotebook {
   const cellText =
     `### Run ${run.timestamp}\n\n` +
     `<!-- run:${JSON.stringify(run)} -->\n\n` +
-    `**Verdict:** ${run.verdict} (confidence ${run.confidence.toFixed(2)})\n\n` +
-    `**Evidence for:**\n${forList}\n\n` +
-    `**Evidence against:**\n${againstList}` +
+    `${assessment}\n\n` +
+    `**${retrieval ? 'Thesis-query results' : 'Evidence for'}:**\n${forList}\n\n` +
+    `**${retrieval ? 'Antithesis-query results' : 'Evidence against'}:**\n${againstList}` +
     blind +
     websets;
 
@@ -184,8 +183,9 @@ export function appendRun(slug: string, run: NotebookRun): DecodedNotebook {
     slug,
     title: titleOf(cells, slug),
     path: filePath,
-    latestVerdict: run.verdict,
-    latestConfidence: run.confidence,
+    latestRun: retrieval
+      ? { kind: 'retrieval', balance: run.retrievalBalance, score: run.retrievalScore }
+      : { kind: 'legacy', verdict: run.verdict, confidence: run.confidence },
   });
 
   return { ...nb, cells, runs: parseRuns(cells) };

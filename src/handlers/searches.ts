@@ -2,6 +2,7 @@ import type { Exa } from 'exa-js';
 import { z } from 'zod';
 import { OperationHandler, successResult, errorResult, requireParams } from './types.js';
 import { projectSearch } from '../lib/projections.js';
+import { EntitySchema } from '../lib/entitySchema.js';
 
 export const Schemas = {
   create: z.object({
@@ -9,10 +10,10 @@ export const Schemas = {
     query: z.string(),
     // Per spec CreateWebsetSearchParameters: count is required.
     count: z.number(),
-    entity: z.object({ type: z.string() }).optional(),
+    entity: EntitySchema.optional(),
     criteria: z.array(z.object({ description: z.string() })).optional(),
     behavior: z.enum(['override', 'append']).optional(),
-    recall: z.boolean().optional(),
+    recall: z.boolean().optional().describe('Request provider recall estimates, returned unchanged in recall; these are estimates, not measured coverage.'),
     metadata: z.record(z.string()).optional(),
     // Spec additions: graph/import scoping, dedup exclusions, per-company cap.
     // Sub-object shapes vary; defer inner validation to the SDK.

@@ -66,15 +66,19 @@ export function createServer(config: ServerConfig): ServerInstance {
 
   // AgX v2: resolve enrichmentId→description from the webset definition so the
   // event bus can label item-event enrichments (item webhooks carry only the
-  // opaque enrichmentId). Lazy + cached per webset inside the bus.
+  // opaque enrichmentId). Display labels are cached; readiness definitions are
+  // resolved per event, sharing concurrent lookups for the same Webset.
   setEnrichmentLabelResolver(async (websetId: string) => {
     const ws = (await exa.websets.get(websetId)) as unknown as {
       enrichments?: Array<{ id?: string; description?: string; title?: string }>;
     };
+    if (!Array.isArray(ws.enrichments)) throw new Error('Webset enrichment definitions are unavailable');
     const map = new Map<string, string>();
-    for (const e of ws.enrichments ?? []) {
-      const label = e.description ?? e.title;
-      if (e.id && label) map.set(e.id, label);
+    for (const e of ws.enrichments) {
+      if (!e || typeof e.id !== 'string' || !e.id.trim() || map.has(e.id)) {
+        throw new Error('Invalid or duplicate enrichment definition ID');
+      }
+      map.set(e.id, e.description ?? e.title ?? e.id);
     }
     return map;
   });

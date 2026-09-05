@@ -825,9 +825,9 @@ describe('joinLensResults — cooccurrence/temporal', () => {
       by: 'cooccurrence',
       temporal: { days: 7 },
     });
-    // Only lens 'a' is within 7 days of the earliest timestamp (itself)
-    expect(result.lensesWithEvidence).toContain('a');
-    expect(result.lensesWithEvidence).not.toContain('b');
+    // Both windows remain visible, but they cannot jointly satisfy the signal.
+    expect(result.windows).toHaveLength(2);
+    expect(evaluateSignal(result, { requires: { type: 'all' } }, ['a', 'b']).fired).toBe(false);
   });
 
   it('empty lenses produce empty result', () => {
@@ -1613,5 +1613,70 @@ describe('semantic.cron — validate-time degenerate-config rejection', () => {
     );
     warnSpy.mockRestore();
     store.dispose();
+  });
+});
+
+
+describe('bounded matching correctness', () => {
+  const lens = (lensId: string, days: Array<number | string>, name = 'Acme') => ({
+    lensId, websetId: lensId, totalItems: days.length,
+    shapedItems: days.map((day, index) => ({ id: `${lensId}-${index}`, name, url: '', entityType: '', enrichments: { key: name }, projected: {},
+      createdAt: typeof day === 'number' ? new Date(Date.UTC(2026, 0, day)).toISOString() : day })),
+  });
+  for (const by of ['entity', 'entity+temporal', 'temporal', 'cooccurrence'] as const) {
+    it(`${by}: never unions disjoint windows for all, threshold, or combination`, () => {
+      const joined = joinLensResults([lens('a', [1]), lens('b', [2, 20]), lens('c', [21])], { by, temporal: { days: 2 } });
+      for (const requires of [{ type: 'all' as const }, { type: 'threshold' as const, min: 3 }, { type: 'combination' as const, sufficient: [['a', 'c']] }]) {
+        expect(evaluateSignal(joined, { requires }, ['a', 'b', 'c']).fired).toBe(false);
+      }
+      expect(evaluateSignal(joined, { requires: { type: 'threshold', min: 2 } }, ['a', 'b', 'c']).fired).toBe(true);
+    });
+    it(`${by}: finds later inclusive common windows and retains witnesses`, () => {
+      const joined = joinLensResults([lens('a', [1, 20]), lens('b', [21]), lens('c', [22])], { by, temporal: { days: 2 } });
+      const signal = evaluateSignal(joined, { requires: { type: 'all' } }, ['a', 'b', 'c']);
+      expect(signal.fired).toBe(true);
+      expect(signal.entities.length).toBeLessThanOrEqual(1);
+      const window = joined.windows!.find(w => w.witnesses.some(i => i.itemId === 'a-1') && w.witnesses.some(i => i.itemId === 'c-0'))!;
+      expect(window.witnesses[0]).toMatchObject({ itemId: 'a-1', createdAt: '2026-01-20T00:00:00.000Z', timestampSource: 'provider item-creation time' });
+    });
+    it(`${by}: invalid or missing timestamps cannot satisfy a temporal condition`, () => {
+      const joined = joinLensResults([lens('a', [1]), lens('b', ['', 'invalid'])], { by, temporal: { days: 2 } });
+      expect(evaluateSignal(joined, { requires: { type: 'all' } }, ['a', 'b']).fired).toBe(false);
+    });
+  }
+  it.each([
+    ['2026-02-30T00:00:00Z', '2026-03-02T00:00:00Z'],
+    ['2026-02-29T00:00:00Z', '2026-03-01T00:00:00Z'],
+    ['2100-02-29T00:00:00Z', '2100-03-01T00:00:00Z'],
+    ['2024-02-30T00:00:00Z', '2024-03-01T00:00:00Z'],
+    ['2026-04-31T00:00:00Z', '2026-05-01T00:00:00Z'],
+    ['2026-03-01T24:00:00Z', '2026-03-02T00:00:00Z'],
+    ['03/02/2026', '2026-03-02T00:00:00Z'],
+    ['2026-03-02T00:00:00', '2026-03-02T00:00:00Z'],
+  ])('excludes invalid provider timestamp %s instead of normalizing it', (invalid, normalized) => {
+    const joined = joinLensResults([lens('a', [invalid]), lens('b', [normalized])], { by: 'temporal', temporal: { days: 0 } });
+    expect(evaluateSignal(joined, { requires: { type: 'all' } }, ['a', 'b']).fired).toBe(false);
+    expect(joined.windows).toEqual([]);
+  });
+  it.each([
+    ['2024-02-29T00:00:00Z', '2024-02-29T00:00:00Z'],
+    ['2000-02-29T00:00:00Z', '2000-02-29T00:00:00Z'],
+    ['2024-02-29T23:30:00.123456-05:00', '2024-03-01T04:30:00.123Z'],
+    ['2024-03-01T00:30:00+05:30', '2024-02-29T19:00:00Z'],
+  ])('retains valid leap days, timezone offsets, and fractional seconds: %s', (createdAt, equivalent) => {
+    const joined = joinLensResults([lens('a', [createdAt]), lens('b', [equivalent])], { by: 'temporal', temporal: { days: 0 } });
+    expect(evaluateSignal(joined, { requires: { type: 'all' } }, ['a', 'b']).fired).toBe(true);
+    expect(joined.windows![0].witnesses[0].createdAt).toBe(createdAt);
+  });
+  for (const keyEnrichment of [undefined, 'key']) {
+    it(`exact names honor case but reject fuzzy matches (${keyEnrichment ?? 'default'})`, () => {
+      expect(joinLensResults([lens('a', [1], 'Acme Corp'), lens('b', [1], 'Acme Corps')], { by: 'entity', keyEnrichment, entityMatch: { method: 'exact' } }).entities).toHaveLength(0);
+      expect(joinLensResults([lens('a', [1], 'Acme Corp'), lens('b', [1], 'ACME CORP')], { by: 'entity', keyEnrichment, entityMatch: { method: 'exact' } }).entities).toHaveLength(1);
+    });
+  }
+  it('exact URL identity remains supported', () => {
+    const a = lens('a', [1], 'One'), b = lens('b', [1], 'Two');
+    a.shapedItems[0].url = b.shapedItems[0].url = 'https://example.com';
+    expect(joinLensResults([a, b], { by: 'entity', entityMatch: { method: 'exact' } }).entities).toHaveLength(1);
   });
 });

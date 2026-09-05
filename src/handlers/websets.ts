@@ -2,6 +2,7 @@ import type { Exa } from 'exa-js';
 import { z } from 'zod';
 import { OperationHandler, successResult, errorResult, requireParams } from './types.js';
 import { projectWebset } from '../lib/projections.js';
+import { EntitySchema } from '../lib/entitySchema.js';
 
 export const Schemas = {
   create: z.object({
@@ -14,7 +15,7 @@ export const Schemas = {
     searchQuery: z.string().optional(),
     searchCount: z.number().optional(),
     searchCriteria: z.array(z.object({ description: z.string() })).optional(),
-    entity: z.object({ type: z.string() }).optional(),
+    entity: EntitySchema.optional(),
     // Spec additions on the nested search: graph/import scoping, dedup
     // exclusions, per-company cap, recall toggle. Sub-object shapes vary;
     // defer inner validation to the SDK.
@@ -71,7 +72,7 @@ export const Schemas = {
   preview: z.object({
     query: z.string(),
     count: z.number().optional(),
-    entity: z.object({ type: z.string() }).optional(),
+    entity: EntitySchema.optional(),
     search: z.boolean().optional(),
   }),
 };

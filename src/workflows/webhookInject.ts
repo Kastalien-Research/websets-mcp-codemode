@@ -34,7 +34,7 @@ async function webhookInjectWorkflow(
   // receiver does with req.body): payload.type/id drive the event, and
   // payload.data carries the item for the upsert/format path.
   const created = createEvent(event);
-  webhookEventBus.publish(created);
+  await webhookEventBus.publish(created);
 
   return withSummary(
     {

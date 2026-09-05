@@ -16,52 +16,49 @@ export function getWebsetLensMap(): Map<string, string> {
   return websetLensMap;
 }
 
-// --- Enrichment label map (AgX v2) ---
-// Raw item webhook payloads carry only `enrichmentId` (opaque, e.g.
-// "wenrich_..."); the human description lives only on the webset definition.
-// We resolve enrichmentId→description server-side, lazily, once per webset
-// (cached), and write the description into the event payload at publish time —
-// so BOTH the shadow store upsert AND the SSE-delivered event (→ channel
-// formatter) carry human labels. Resolution is fire-and-forget: the first item
-// event for a webset may be unlabeled; subsequent events use the cache.
+// Labels and expected IDs come from the same server-side Webset definition.
+// Readiness uses a fresh lookup per event, shared only while in flight, so a
+// previously empty or smaller definition cannot make later events prematurely ready.
 const enrichmentLabelCache = new Map<string, Map<string, string>>();
-const enrichmentLabelInflight = new Set<string>();
+const enrichmentLabelInflight = new Map<string, Promise<Map<string, string>>>();
 let enrichmentLabelResolver: ((websetId: string) => Promise<Map<string, string>>) | null = null;
 
-/** Inject the resolver at boot (server.ts has the Exa client). */
 export function setEnrichmentLabelResolver(
-  fn: (websetId: string) => Promise<Map<string, string>>,
+  fn: ((websetId: string) => Promise<Map<string, string>>) | null,
 ): void {
   enrichmentLabelResolver = fn;
+  enrichmentLabelInflight.clear();
+  enrichmentLabelCache.clear();
 }
 
-/** Test/pre-warm hook: seed the cache directly (bypasses the resolver). */
+/** Test/pre-warm hook for display labels; it does not certify readiness. */
 export function primeEnrichmentLabels(websetId: string, map: Map<string, string>): void {
   enrichmentLabelCache.set(websetId, map);
 }
 
-/**
- * Return the cached enrichmentId→description map for a webset. On a cache miss,
- * kick off a lazy resolve for next time (fire-and-forget) and return an empty
- * map so the caller falls back to the enrichmentId until the cache warms.
- */
-function enrichmentLabelsFor(websetId: string): Map<string, string> {
-  const cached = enrichmentLabelCache.get(websetId);
-  if (cached) return cached;
-  if (websetId && enrichmentLabelResolver && !enrichmentLabelInflight.has(websetId)) {
-    enrichmentLabelInflight.add(websetId);
-    enrichmentLabelResolver(websetId)
-      .then((map) => { enrichmentLabelCache.set(websetId, map); })
-      .catch(() => { /* leave uncached; enrichmentId labels used until it succeeds */ })
-      .finally(() => { enrichmentLabelInflight.delete(websetId); });
-  }
-  return new Map();
+function resolveEnrichmentDefinitions(websetId: string): Promise<Map<string, string>> | undefined {
+  if (!websetId || !enrichmentLabelResolver) return undefined;
+  const existing = enrichmentLabelInflight.get(websetId);
+  if (existing) return existing;
+  const resolver = enrichmentLabelResolver;
+  const pending = Promise.resolve().then(() => resolver(websetId)).then(map => {
+    if (!(map instanceof Map) || [...map.keys()].some(id => typeof id !== 'string' || !id.trim())) {
+      throw new Error('Invalid enrichment definitions');
+    }
+    enrichmentLabelCache.set(websetId, map);
+    return map;
+  }).finally(() => {
+    if (enrichmentLabelInflight.get(websetId) === pending) enrichmentLabelInflight.delete(websetId);
+  });
+  enrichmentLabelInflight.set(websetId, pending);
+  return pending;
 }
 
 export interface WebhookEvent {
   id: string;
   type: string;
   receivedAt: string;
+  expectedEnrichmentIds?: string[] | null;
   payload: Record<string, unknown>;
 }
 
@@ -75,7 +72,20 @@ class WebhookEventBus {
     return () => this.subscribers.delete(cb);
   }
 
-  publish(event: WebhookEvent): void {
+  async publish(event: WebhookEvent): Promise<void> {
+    if (event.type === 'webset.item.created' || event.type === 'webset.item.enriched') {
+      // Never trust a provider payload to declare its own required definitions.
+      event.expectedEnrichmentIds = null;
+      const pending = resolveEnrichmentDefinitions(extractWebsetId(event) ?? '');
+      if (pending) {
+        try {
+          const definitions = await pending;
+          event.expectedEnrichmentIds = [...definitions.keys()];
+        } catch {
+          // Unknown remains non-ready. A later event retries the lookup.
+        }
+      }
+    }
     // Persist to SQLite
     try {
       insertEvent({
@@ -103,10 +113,9 @@ class WebhookEventBus {
           // AgX v2: resolve enrichmentId→description from the webset definition
           // and write it onto the payload IN PLACE, so the SSE-delivered event
           // (→ channel formatter) and the store upsert below both carry human
-          // labels instead of opaque enrichmentIds. Cache miss → unlabeled this
-          // event, warmed for the next (see enrichmentLabelsFor).
+          // labels instead of opaque enrichmentIds. Lookup failures may leave display labels unavailable; readiness remains unknown.
           const wsId = (data.websetId ?? extractWebsetId(event) ?? '') as string;
-          const labelMap = enrichmentLabelsFor(wsId);
+          const labelMap = enrichmentLabelCache.get(wsId) ?? new Map<string, string>();
           const rawEnrichments = data.enrichments as Array<Record<string, unknown>> | undefined;
           if (Array.isArray(rawEnrichments) && labelMap.size > 0) {
             for (const e of rawEnrichments) {

@@ -133,6 +133,9 @@ function initSchema(db: Database.Database): void {
       statement TEXT,
       latest_verdict TEXT,
       latest_confidence REAL,
+      latest_run_kind TEXT,
+      latest_retrieval_balance TEXT,
+      latest_retrieval_score REAL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -191,6 +194,16 @@ function initSchema(db: Database.Database): void {
         cost_dollars, fetched_at
       FROM connect_enrichments WHERE providers LIKE '%fiber_ai%';
   `);
+  // Additive migration: historical notebook runs and legacy index values remain intact.
+  const notebookColumns = new Set((db.prepare('PRAGMA table_info(notebooks)').all() as Array<{ name: string }>).map(c => c.name));
+  db.transaction(() => {
+    for (const [name, type] of [['latest_run_kind', 'TEXT'], ['latest_retrieval_balance', 'TEXT'], ['latest_retrieval_score', 'REAL']]) {
+      if (!notebookColumns.has(name)) db.exec(`ALTER TABLE notebooks ADD COLUMN ${name} ${type}`);
+    }
+    db.exec(`UPDATE notebooks SET latest_run_kind = 'legacy'
+      WHERE latest_run_kind IS NULL AND (latest_verdict IS NOT NULL OR latest_confidence IS NOT NULL)`);
+  })();
+
 }
 
 export function saveWebhookSecret(
@@ -653,6 +666,9 @@ export interface NotebookRow {
   statement: string | null;
   latest_verdict: string | null;
   latest_confidence: number | null;
+  latest_run_kind: 'legacy' | 'retrieval' | null;
+  latest_retrieval_balance: string | null;
+  latest_retrieval_score: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -662,27 +678,34 @@ export function upsertNotebook(nb: {
   title?: string;
   path: string;
   statement?: string;
-  latestVerdict?: string;
-  latestConfidence?: number;
+  latestRun?:
+    | { kind: 'legacy'; verdict: string; confidence: number }
+    | { kind: 'retrieval'; balance: string; score: number };
 }): void {
   const d = getDb();
   d.prepare(`
-    INSERT INTO notebooks (slug, title, path, statement, latest_verdict, latest_confidence, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO notebooks (slug, title, path, statement, latest_verdict, latest_confidence, latest_run_kind, latest_retrieval_balance, latest_retrieval_score, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(slug) DO UPDATE SET
       title = COALESCE(excluded.title, notebooks.title),
       path = excluded.path,
       statement = COALESCE(excluded.statement, notebooks.statement),
-      latest_verdict = COALESCE(excluded.latest_verdict, notebooks.latest_verdict),
-      latest_confidence = COALESCE(excluded.latest_confidence, notebooks.latest_confidence),
+      latest_verdict = CASE WHEN excluded.latest_run_kind IS NULL THEN notebooks.latest_verdict ELSE excluded.latest_verdict END,
+      latest_confidence = CASE WHEN excluded.latest_run_kind IS NULL THEN notebooks.latest_confidence ELSE excluded.latest_confidence END,
+      latest_run_kind = COALESCE(excluded.latest_run_kind, notebooks.latest_run_kind),
+      latest_retrieval_balance = CASE WHEN excluded.latest_run_kind IS NULL THEN notebooks.latest_retrieval_balance ELSE excluded.latest_retrieval_balance END,
+      latest_retrieval_score = CASE WHEN excluded.latest_run_kind IS NULL THEN notebooks.latest_retrieval_score ELSE excluded.latest_retrieval_score END,
       updated_at = datetime('now')
   `).run(
     nb.slug,
     nb.title ?? null,
     nb.path,
     nb.statement ?? null,
-    nb.latestVerdict ?? null,
-    nb.latestConfidence ?? null,
+    nb.latestRun?.kind === 'legacy' ? nb.latestRun.verdict : null,
+    nb.latestRun?.kind === 'legacy' ? nb.latestRun.confidence : null,
+    nb.latestRun?.kind ?? null,
+    nb.latestRun?.kind === 'retrieval' ? nb.latestRun.balance : null,
+    nb.latestRun?.kind === 'retrieval' ? nb.latestRun.score : null,
   );
 }
 

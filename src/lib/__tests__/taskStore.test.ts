@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { TaskStore } from '../taskStore.js';
 
 describe('TaskStore', () => {
@@ -6,6 +6,7 @@ describe('TaskStore', () => {
 
   afterEach(() => {
     store?.dispose();
+    vi.useRealTimers();
   });
 
   it('creates and retrieves a task', () => {
@@ -93,6 +94,25 @@ describe('TaskStore', () => {
   it('cancel returns false for unknown id', () => {
     store = new TaskStore();
     expect(store.cancel('task_nope')).toBe(false);
+  });
+
+  it.each(['completed', 'failed', 'cancelled'] as const)('keeps %s tasks immutable through every late writer', status => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-05T00:00:00Z'));
+    store = new TaskStore();
+    const task = store.create('echo', {});
+    store.setPartialResult(task.id, { receipt: 'keep' });
+    if (status === 'completed') store.setResult(task.id, { original: true });
+    if (status === 'failed') store.setError(task.id, { step: 'original', message: 'failure', recoverable: false });
+    if (status === 'cancelled') store.cancel(task.id);
+    const before = structuredClone(store.get(task.id));
+    vi.advanceTimersByTime(1000);
+    store.updateProgress(task.id, { step: 'late', completed: 1, total: 1 });
+    store.setPartialResult(task.id, { receipt: 'overwrite' });
+    store.setResult(task.id, { late: true });
+    store.setError(task.id, { step: 'late', message: 'failure', recoverable: true });
+    expect(store.cancel(task.id)).toBe(false);
+    expect(store.get(task.id)).toEqual(before);
   });
 
   it('setPartialResult stores intermediate data', () => {

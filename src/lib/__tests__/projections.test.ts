@@ -116,6 +116,8 @@ describe('projectItem', () => {
     const result = projectItem(makeItem());
     expect(result).toEqual({
       id: 'item-1',
+      websetId: 'ws-1',
+      createdAt: '2024-01-01T00:00:00Z',
       name: 'Acme Corp',
       url: 'https://acme.com',
       entityType: 'company',
@@ -128,20 +130,20 @@ describe('projectItem', () => {
         // enrichmentId is surfaced so callers can map each value back to its
         // criterion via the webset's enrichment list. Real items often carry only
         // enrichmentId (no inline description), so position-based mapping is unsafe.
-        { enrichmentId: 'enr-1', description: 'Annual revenue', format: 'number', result: ['50000000'] },
+        { enrichmentId: 'enr-1', description: 'Annual revenue', format: 'number', status: 'completed', result: ['50000000'] },
       ],
     });
   });
 
-  it('strips content, reasoning, references, status, object — but keeps enrichmentId for mapping', () => {
+  it('strips bulky evidence but retains identity, freshness and enrichment status', () => {
     const result = projectItem(makeItem());
     const text = JSON.stringify(result);
     expect(text).not.toContain('Very long content');
     expect(text).not.toContain('reasoning');
     expect(text).not.toContain('references');
-    expect(text).not.toContain('websetId');
+    expect(text).toContain('websetId');
     expect(text).not.toContain('sourceId');
-    expect(text).not.toContain('createdAt');
+    expect(text).toContain('createdAt');
     expect(text).not.toContain('"object"');
     // enrichmentId is intentionally retained (load-bearing for value→criterion mapping).
     expect(text).toContain('enrichmentId');
@@ -257,7 +259,7 @@ describe('filterAndProjectItems', () => {
     const item = result.data[0] as Record<string, unknown>;
     expect(item.name).toBe('Acme Corp');
     expect(item).not.toHaveProperty('properties');
-    expect(item).not.toHaveProperty('websetId');
+    expect(item).toHaveProperty('websetId', 'ws-1');
   });
 
   it('handles empty array', () => {
@@ -415,6 +417,8 @@ describe('projectSearch', () => {
       status: 'completed',
       query: 'AI startups',
       metadata: { tag: 'test' },
+      recall: true,
+      createdAt: '2024-01-01T00:00:00Z',
       progress: { found: 15, analyzed: 200, completion: 100, timeLeft: 0 },
       criteria: [
         { description: 'Has funding', successRate: 45.2 },
@@ -423,7 +427,7 @@ describe('projectSearch', () => {
     });
   });
 
-  it('strips entity, behavior, recall, timestamps', () => {
+  it('strips entity and behavior but preserves recall and timestamps', () => {
     const result = projectSearch({
       id: 's-1', status: 'active', query: 'test',
       entity: { type: 'company' }, behavior: 'override', recall: true,
@@ -432,8 +436,8 @@ describe('projectSearch', () => {
     const text = JSON.stringify(result);
     expect(text).not.toContain('"entity"');
     expect(text).not.toContain('"behavior"');
-    expect(text).not.toContain('"recall"');
-    expect(text).not.toContain('"createdAt"');
+    expect(text).toContain('"recall"');
+    expect(text).toContain('"createdAt"');
   });
 
   it('handles missing progress and criteria', () => {

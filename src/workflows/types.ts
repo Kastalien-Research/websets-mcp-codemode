@@ -1,3 +1,5 @@
+import { workflowArgumentSchema } from './schemas.js';
+import { schemaParameters } from '../lib/jsonSchema.js';
 import type { Exa } from 'exa-js';
 import type { TaskStore } from '../lib/taskStore.js';
 import { runEffectWorkflow, type EffectWorkflowFn } from '../lib/effect/runner.js';
@@ -34,8 +36,14 @@ export const workflowRegistry = new Map<string, WorkflowFunction>();
 export const workflowMetadata = new Map<string, WorkflowMeta>();
 
 export function registerWorkflow(type: string, fn: WorkflowFunction, meta?: WorkflowMeta): void {
+  const schema = workflowArgumentSchema(type);
   workflowRegistry.set(type, fn);
-  if (meta) workflowMetadata.set(type, meta);
+  if (meta) {
+    const prose = new Map(meta.parameters.map(parameter => [parameter.name, parameter.description]));
+    workflowMetadata.set(type, { ...meta, description: [meta.description, schema.description].filter(Boolean).join(' '), parameters: schemaParameters(schema).map(parameter => ({
+      ...parameter, description: prose.get(parameter.name) ?? parameter.description,
+    })) });
+  }
 }
 
 /**
@@ -74,6 +82,5 @@ export function registerEffectWorkflow<A>(
 ): void {
   const wrapped: WorkflowFunction = (taskId, args, exa, store) =>
     runEffectWorkflow(taskId, args, exa, store, fn);
-  workflowRegistry.set(type, wrapped);
-  if (meta) workflowMetadata.set(type, meta);
+  registerWorkflow(type, wrapped, meta);
 }
