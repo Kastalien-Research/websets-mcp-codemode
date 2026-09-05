@@ -70,7 +70,7 @@ export async function runConnectEnrich(
     throw new Error('providers (string[]) is required');
   }
   const outputSchema = args.outputSchema as Record<string, unknown>;
-  if (!outputSchema) throw new Error('outputSchema is required');
+  if (!outputSchema || outputSchema.type !== 'object') throw new Error('outputSchema must have type object');
 
   // I1 — Validate providers against the active catalog before loading any data or spending.
   const activeIds = new Set(
@@ -106,7 +106,8 @@ export async function runConnectEnrich(
 
   store.updateProgress(taskId, { step: 'collecting items', completed: 2, total: 4 });
   const allItems = await collectItems(exa, websetId, maxItems);
-  const rows = allItems.map(itemRow).filter((r) => r._itemId);
+  const rows = allItems.map(itemRow).filter((r) => typeof r._itemId === 'string' && r._itemId.length > 0);
+  const sourceById = new Map(allItems.map(item => [item.id, item]));
 
   const perRowPrice = providers.reduce((sum, p) => sum + priceFor(p), 0);
   const estimatedCost = Math.round(perRowPrice * rows.length * 1000) / 1000;
@@ -144,6 +145,7 @@ export async function runConnectEnrich(
   // Each result object echoes the input row's _itemId for reliable correlation.
   const itemSchema = JSON.parse(JSON.stringify(outputSchema)) as Record<string, unknown>;
   if (itemSchema && itemSchema.type === 'object') {
+    itemSchema.required = [...new Set([...(Array.isArray(itemSchema.required) ? itemSchema.required : []), '_itemId'])];
     itemSchema.properties = {
       ...((itemSchema.properties as Record<string, unknown>) || {}),
       _itemId: { type: 'string', description: 'Echo the input row _itemId verbatim.' },
@@ -160,6 +162,8 @@ export async function runConnectEnrich(
   // Hash uses the original outputSchema (user intent), not the wrapped one.
   const schemaHash = connectSchemaHash(providers, outputSchema);
   const runIds: string[] = [];
+  const associationErrors: Array<{ batchIndex: number; invalidIdentities: Array<{ rowIndex: number; itemId?: unknown; reason: string }>; affectedInputIds: string[] }> = [];
+  const persistenceErrors: Array<{ batchIndex: number; affectedInputIds: string[]; error: string }> = [];
   let enriched = 0;
   let failed = 0;
   let costDollars = 0;
@@ -211,45 +215,59 @@ export async function runConnectEnrich(
         ? (resultsRaw as Array<Record<string, unknown>>)
         : [];
 
+      // Validate the complete response before any writes: duplicates invalidate every
+      // occurrence, and identity never derives from response position.
+      const inputCounts = new Map<string, number>();
+      for (const row of batch) inputCounts.set(row._itemId as string, (inputCounts.get(row._itemId as string) ?? 0) + 1);
+      const outputCounts = new Map<string, number>();
+      for (const row of outRows) {
+        if (row && typeof row._itemId === 'string') outputCounts.set(row._itemId, (outputCounts.get(row._itemId) ?? 0) + 1);
+      }
+      const valid = new Map<string, Record<string, unknown>>();
+      const invalidIdentities: Array<{ rowIndex: number; itemId?: unknown; reason: string }> = [];
+      outRows.forEach((row, rowIndex) => {
+        const id = row && typeof row === 'object' ? row._itemId : undefined;
+        const reason = typeof id !== 'string' || !id ? 'missing or invalid _itemId'
+          : !inputCounts.has(id) ? 'foreign _itemId'
+          : inputCounts.get(id) !== 1 || outputCounts.get(id) !== 1 ? 'duplicate _itemId' : undefined;
+        if (reason) invalidIdentities.push({ rowIndex, itemId: id, reason });
+        else valid.set(id as string, row);
+      });
+      const affectedInputIds = [...inputCounts.keys()].filter(id => !valid.has(id));
+      if (invalidIdentities.length || affectedInputIds.length) associationErrors.push({ batchIndex: i, invalidIdentities, affectedInputIds });
+
       for (let j = 0; j < batch.length; j++) {
         const itemId = batch[j]._itemId as string;
-        // Prefer _itemId correlation; fall back to positional with a warning.
-        let out = outRows.find((o) => o._itemId === itemId);
-        if (!out) {
-          if (outRows[j]) {
-            console.warn(
-              `[connect.enrich] low-confidence positional correlation for item ${itemId} ` +
-              `at batch position ${j} (no _itemId match found)`,
-            );
-            out = outRows[j];
-          } else {
-            failed += 1;
-            continue;
-          }
+        const out = valid.get(itemId);
+        if (!out) { failed += 1; continue; }
+        try {
+          const src = sourceById.get(itemId);
+          const props = (src?.properties ?? {}) as Record<string, unknown>;
+          upsertItem({
+            id: itemId,
+            websetId,
+            name: (batch[j].name as string) ?? undefined,
+            url: (props.url as string) ?? undefined,
+            entityType,
+          });
+          const { _itemId, ...structured } = out;
+          void _itemId; // stripped — not persisted
+          upsertConnectEnrichment({
+            itemId,
+            providers,
+            query: baseQuery,
+            schemaHash,
+            structured,
+            grounding: agentOutput?.grounding,
+            costDollars: costPerRow ?? undefined,
+            effort,
+            runId: runId ?? undefined,
+          });
+          enriched += 1;
+        } catch (err) {
+          failed += 1;
+          persistenceErrors.push({ batchIndex: i, affectedInputIds: [itemId], error: err instanceof Error ? err.message : String(err) });
         }
-        const src = allItems[i + j];
-        const props = (src?.properties ?? {}) as Record<string, unknown>;
-        upsertItem({
-          id: itemId,
-          websetId,
-          name: (batch[j].name as string) ?? undefined,
-          url: (props.url as string) ?? undefined,
-          entityType,
-        });
-        const { _itemId, ...structured } = out;
-        void _itemId; // stripped — not persisted
-        upsertConnectEnrichment({
-          itemId,
-          providers,
-          query: baseQuery,
-          schemaHash,
-          structured,
-          grounding: agentOutput?.grounding,
-          costDollars: costPerRow ?? undefined,
-          effort,
-          runId: runId ?? undefined,
-        });
-        enriched += 1;
       }
     } catch (err) {
       console.warn(
@@ -263,7 +281,7 @@ export async function runConnectEnrich(
 
   store.updateProgress(taskId, { step: 'done', completed: 4, total: 4 });
   return withSummary(
-    { websetId, providers, entityType, enriched, failed, estimatedCost, costDollars, runIds, dryRun: false },
+    { websetId, providers, entityType, enriched, failed, estimatedCost, costDollars, runIds, associationErrors, persistenceErrors, dryRun: false },
     `Enriched ${enriched}/${rows.length} items via ${providers.join(', ')} ` +
     `(actual $${Math.round(costDollars * 1000) / 1000})`,
   );

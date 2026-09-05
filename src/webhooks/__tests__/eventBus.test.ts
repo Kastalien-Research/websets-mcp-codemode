@@ -13,7 +13,7 @@ vi.mock('../../store/db.js', () => ({
 }));
 
 import { upsertItem } from '../../store/db.js';
-import { webhookEventBus, createEvent, primeEnrichmentLabels } from '../eventBus.js';
+import { webhookEventBus, createEvent, primeEnrichmentLabels, setEnrichmentLabelResolver } from '../eventBus.js';
 
 describe('WebhookEventBus', () => {
   it('delivers events to subscribers', () => {
@@ -152,5 +152,49 @@ describe('createEvent', () => {
     const event = createEvent({ type: 'test' });
     expect(event.id).toBeTruthy();
     expect(event.id).not.toBe('test');
+  });
+});
+
+
+describe('server-resolved readiness context', () => {
+  beforeEach(() => { setEnrichmentLabelResolver(null); });
+
+  it('resolves definitions before the first event is delivered and retries after failure', async () => {
+    const resolver = vi.fn().mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(new Map([['required', 'Required']]))
+      .mockResolvedValueOnce(new Map());
+    setEnrichmentLabelResolver(resolver);
+    const received: any[] = [];
+    const unsubscribe = webhookEventBus.subscribe(e => received.push(e));
+    const make = () => createEvent({ type: 'webset.item.created', data: { id: 'item_context', websetId: 'ws_context' } });
+    try {
+      await webhookEventBus.publish(make());
+      expect(received.at(-1).expectedEnrichmentIds).toBeNull();
+      await webhookEventBus.publish(make());
+      expect(received.at(-1).expectedEnrichmentIds).toEqual(['required']);
+      await webhookEventBus.publish(make());
+      expect(received.at(-1).expectedEnrichmentIds).toEqual([]);
+      expect(resolver).toHaveBeenCalledTimes(3);
+    } finally { unsubscribe(); setEnrichmentLabelResolver(null); }
+  });
+
+  it('shares an in-flight definition read, but does not reuse stale definitions', async () => {
+    let resolve!: (value: Map<string, string>) => void;
+    const resolver = vi.fn().mockImplementationOnce(() => new Promise<Map<string, string>>(r => { resolve = r; }))
+      .mockResolvedValueOnce(new Map([['new-enrichment', 'Added after initial lookup']]));
+    setEnrichmentLabelResolver(resolver);
+    const one = createEvent({ type: 'webset.item.enriched', data: { id: 'item1', websetId: 'ws_shared' } });
+    const two = createEvent({ type: 'webset.item.enriched', data: { id: 'item2', websetId: 'ws_shared' } });
+    const first = webhookEventBus.publish(one);
+    const second = webhookEventBus.publish(two);
+    await Promise.resolve();
+    expect(resolver).toHaveBeenCalledTimes(1);
+    resolve(new Map());
+    await Promise.all([first, second]);
+    expect(one.expectedEnrichmentIds).toEqual([]);
+    expect(two.expectedEnrichmentIds).toEqual([]);
+    await webhookEventBus.publish(one);
+    expect(one.expectedEnrichmentIds).toEqual(['new-enrichment']);
+    setEnrichmentLabelResolver(null);
   });
 });

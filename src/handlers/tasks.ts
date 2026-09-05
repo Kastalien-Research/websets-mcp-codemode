@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import type { OperationHandler, ResourceLinkContent } from './types.js';
 import { successResult, successResultWithLinks, errorResult, requireParams } from './types.js';
-import { taskStore } from '../lib/taskStore.js';
+import { taskStore, TASK_STATUSES, type TaskStatus } from '../lib/taskStore.js';
 import { workflowRegistry, workflowMetadata } from '../workflows/types.js';
+import { workflowArgumentSchema } from '../workflows/schemas.js';
 import { WorkflowError } from '../workflows/helpers.js';
 
 export const Schemas = {
@@ -17,7 +18,8 @@ export const Schemas = {
     taskId: z.string(),
   }),
   list: z.object({
-    status: z.enum(['pending', 'running', 'completed', 'failed', 'cancelled']).optional(),
+    status: z.enum([...TASK_STATUSES, 'running']).optional()
+      .describe('Task state; working is canonical. running is accepted as a compatibility alias for working.'),
   }),
   cancel: z.object({
     taskId: z.string(),
@@ -38,7 +40,7 @@ export const create: OperationHandler = async (args, exa) => {
 
   try {
     const { type: _type, args: _args, ...rest } = args;
-    const taskArgs = (_args as Record<string, unknown>) ?? rest;
+    const taskArgs = workflowArgumentSchema(type).parse(_args === undefined ? rest : _args) as Record<string, unknown>;
     const task = taskStore.create(type, taskArgs);
 
 
@@ -109,8 +111,8 @@ export const result: OperationHandler = async (args) => {
 };
 
 export const list: OperationHandler = async (args) => {
-  const status = args.status as string | undefined;
-  const tasks = taskStore.list(status as any);
+  const status = args.status === 'running' ? 'working' : args.status as TaskStatus | undefined;
+  const tasks = taskStore.list(status);
   return successResult({
     tasks: tasks.map(t => ({
       id: t.id,
@@ -132,5 +134,5 @@ export const cancel: OperationHandler = async (args) => {
   if (!cancelled) {
     return errorResult('tasks.cancel', `Cannot cancel task ${args.taskId} (not found or already finished)`);
   }
-  return successResult({ taskId: args.taskId, status: 'cancelled' });
+  return successResult({ taskId: args.taskId, status: 'cancelled', message: 'Local task cancelled. This does not confirm cancellation of provider work.' });
 };

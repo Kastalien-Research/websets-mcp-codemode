@@ -12,7 +12,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
-import { decideItemReady, SYNTHETIC_ITEM_READY, type ChannelEvent } from './channelSynthesis.js';
+import { selectItemNotification, SYNTHETIC_ITEM_READY, type ChannelEvent } from './channelSynthesis.js';
 import { buildSemanticCronNotification, directiveMeta, type WorkflowConfig } from './channelNotification.js';
 
 const WEBSETS_SERVER_URL = process.env.WEBSETS_SERVER_URL || 'http://localhost:7860';
@@ -96,11 +96,14 @@ Route by score:
 - monitor (<7) → log briefly. (Note: the channel only emits candidates with score >= 7.)
 
 ### webset.item.ready (synthesized)
-The bridge emits ONE webset.item.ready per item after the per-item event stream
-quiesces (default 60s) AND no evaluation is satisfied:"no". Payload carries the
-full final item state (properties, enrichments, evaluations). Items with any
+The bridge emits webset.item.ready after the per-item event stream
+quiesces (default 60s), evaluation data is valid with no satisfied:"no", AND all
+expected enrichments are completed against server-resolved definitions. Payload carries the
+latest observed item state (properties, enrichments, evaluations). Items with any
 satisfied:"no" evaluation are dropped silently — Stage-2 verification only sees
-items that passed the criteria gate. Log the entity. Use websets MCP for
+items that passed the criteria and completion gates. A quiet interval does not
+guarantee the item will never change. Unknown definitions or incomplete payloads
+do not emit ready; explicitly enabled raw events remain available. Log the entity. Use websets MCP for
 further research, or dispatch agentRuns.verifyItem for Stage 2 of a research
 pipeline.
 
@@ -130,18 +133,14 @@ await server.connect(new StdioServerTransport());
 //   1. Duplicate event delivery: same event_id arriving twice (likely from
 //      doubled SSE subscribers after reconnects). Dedup by event_id.
 //   2. Volume: every enrichment increment fires a webhook. We coalesce per
-//      item.id with a longer debounce so the bridge emits exactly one
-//      notification per item once its enrichment pipeline has settled.
-//   3. Synthesis: at debounce-fire time, inspect the item's evaluations[].
-//      If any evaluation has satisfied:"no", drop the event entirely (the
-//      item failed the webset's criteria gate). Otherwise re-brand the
-//      emitted event_type as `webset.item.ready` — a synthetic per-item
-//      completion signal callers can use to trigger Stage-2 verification
-//      (e.g. dispatch an agentRuns.verifyItem workflow on the item).
+//      item.id and emit at most one notification after each quiet interval.
+//   3. Synthesis: require valid identity/evaluations, no negative evaluation,
+//      known enrichment definitions, and one completed result for each ID.
+//      Otherwise preserve an explicitly enabled raw event. Readiness describes
+//      the observed state and can be followed by later updates.
 //
-// Filter policy (permissive): items pass through when no evaluation is
-// satisfied:"no". satisfied:"yes" and satisfied:"unclear" both pass — the
-// caller's downstream verifier (e.g. an agent run) resolves the ambiguity.
+// Both satisfied:"yes" and satisfied:"unclear" remain eligible for downstream
+// verification when the required enrichment work is complete.
 // The pure decision helper lives in ./channelSynthesis (separate module so
 // unit tests can import without triggering bridge startup side effects).
 
@@ -165,8 +164,8 @@ const itemLatestEvent = new Map<string, ChannelEvent>();
 // because Exa enrichment jobs for an item arrive ~10–60s apart. 5s was
 // shorter than the inter-enrichment cadence, so each enrichment fired its
 // own coalesce window and the user saw a flood. 60s is long enough that
-// every enrichment for a typical item lands inside one window. Override
-// with CHANNEL_ITEM_COALESCE_MS for atypical workloads.
+// many updates can coalesce. The completion gate still checks definitions;
+// elapsed silence is not proof of completion. Override with CHANNEL_ITEM_COALESCE_MS.
 const ITEM_COALESCE_DELAY_MS = parseInt(
   process.env.CHANNEL_ITEM_COALESCE_MS ?? '60000',
   10,
@@ -273,7 +272,7 @@ function extractWebsetId(event: ChannelEvent): string | undefined {
   return undefined;
 }
 
-function isAllowed(event: ChannelEvent): boolean {
+function isAllowed(event: ChannelEvent, requireExplicit = false): boolean {
   const websetId = extractWebsetId(event);
   const websets = channelConfig.websets || {};
   // For semantic-cron.* events, the event isn't tied to a single webset — the
@@ -300,6 +299,7 @@ function isAllowed(event: ChannelEvent): boolean {
   const entry = websetId ? websets[websetId] : undefined;
   const effective = entry ?? channelConfig.default ?? { enabled: true };
   if (effective.enabled === false) return false;
+  if (requireExplicit && !effective.events?.includes(event.type)) return false;
   if (effective.events && !effective.events.includes(event.type)) return false;
   return true;
 }
@@ -383,21 +383,16 @@ async function pushChannelNotification(event: ChannelEvent): Promise<void> {
   // 2. Coalesce per-item updates. webset.item.created and webset.item.enriched
   //    fire many times for the same item as enrichments complete. We aggregate
   //    them by item.id with a quiescence window; once no new event has arrived
-  //    for the item within ITEM_COALESCE_DELAY_MS, we synthesize one final
-  //    notification.
-  //
-  //    At timer-fire we call decideItemReady() to either:
-  //      - drop the event (item failed the criteria gate), or
-  //      - re-brand the event_type as `webset.item.ready` and emit with the
-  //        latest cumulative payload. The synthetic type then passes through
-  //        isAllowed() so per-webset config can still suppress it.
+  //    for the item within ITEM_COALESCE_DELAY_MS, select a notification.
+  //    Emit ready only if the latest payload passes the completion gate and
+  //    allowlist, otherwise fall back to an explicitly enabled raw type.
   if (
     event.type === 'webset.item.created' ||
     event.type === 'webset.item.enriched'
   ) {
     const data = (event.payload?.data ?? {}) as Record<string, unknown>;
-    const itemId = data.id as string | undefined;
-    if (itemId) {
+    const itemId = data.id;
+    if (typeof itemId === 'string' && itemId.trim().length > 0) {
       // Retain BOTH the most recent event (for synthesis input — it carries
       // the cumulative latest enrichments + evaluations) AND one entry per
       // raw event_type (for fallback emission when the synthetic is
@@ -417,43 +412,18 @@ async function pushChannelNotification(event: ChannelEvent): Promise<void> {
         itemEventsByType.delete(itemId);
         if (!finalEvent) return;
 
-        const decision = decideItemReady(finalEvent);
-        if (!decision.emit) return; // dropped by criteria filter
-
-        const synthetic: ChannelEvent = {
-          ...finalEvent,
-          type: decision.syntheticType,
-        };
-        // Allowlist precedence:
-        //   1. If config allows the synthetic type → emit synthetic
-        //      (new default; most users want webset.item.ready as the
-        //      single "item is done + passed gate" signal).
-        //   2. Else walk the raw event types we observed in this window
-        //      and emit the first one the config allows. The retention is
-        //      per-type, not just "latest" — a route configured with
-        //      events:["webset.item.created"] gets its created event
-        //      back even if an enriched event also arrived in the window.
-        //      Iteration order prefers .enriched first (richer payload)
-        //      then .created (initial event).
-        //   3. Else drop (config opted out of both raw and synthetic).
-        if (isAllowed(synthetic)) {
-          void emitNotification(synthetic);
-        } else if (rawByType) {
-          for (const rawType of ['webset.item.enriched', 'webset.item.created']) {
-            const rawEvent = rawByType.get(rawType);
-            if (rawEvent && isAllowed(rawEvent)) {
-              void emitNotification(rawEvent);
-              return;
-            }
-          }
-        }
+        const notification = selectItemNotification(finalEvent, rawByType ?? new Map(), isAllowed);
+        if (notification) void emitNotification(notification);
       }, ITEM_COALESCE_DELAY_MS);
       itemCoalesceTimers.set(itemId, timer);
       return;
     }
+    // Invalid identities cannot enter synthesis. Their immediate raw fallback
+    // must honor the same explicit opt-in (and enabled webset) as the selector.
+    if (!isAllowed(event, true)) return;
   }
 
-  // Non-item events (e.g. webset.idle, NEW_OPPORTUNITY_CANDIDATE) emit immediately.
+  // Non-item events and explicitly enabled raw events without valid item IDs emit immediately.
   await emitNotification(event);
 }
 

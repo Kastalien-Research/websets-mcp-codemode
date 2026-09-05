@@ -2,15 +2,16 @@ import type { Exa } from 'exa-js';
 import { z } from 'zod';
 import { OperationHandler, successResult, errorResult, requireParams } from './types.js';
 import { projectImport } from '../lib/projections.js';
+import { EntitySchema } from '../lib/entitySchema.js';
 
 export const Schemas = {
   create: z.object({
-    format: z.string(),
-    entity: z.object({ type: z.string() }),
+    format: z.literal('csv'),
+    entity: EntitySchema,
     count: z.number(),
     size: z.number(),
     title: z.string().optional(),
-    csv: z.string().optional(),
+    csv: z.object({ identifier: z.number().optional().describe('CSV column containing the entity identifier; passed through to the provider.') }).optional(),
     metadata: z.record(z.string()).optional(),
   }),
   get: z.object({

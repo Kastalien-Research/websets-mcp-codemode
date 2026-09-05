@@ -1,7 +1,7 @@
 import type { Exa } from 'exa-js';
 import { z } from 'zod';
 import { OperationHandler, successResult, errorResult, requireParams } from './types.js';
-import { filterAndProjectItems } from '../lib/projections.js';
+import { filterAndProjectItems, EVALUATION_POLICIES, type EvaluationPolicy } from '../lib/projections.js';
 import { upsertItem } from '../store/db.js';
 
 export const Schemas = {
@@ -9,6 +9,8 @@ export const Schemas = {
     websetId: z.string(),
     limit: z.number().optional(),
     cursor: z.string().optional(),
+    evaluationPolicy: z.enum(EVALUATION_POLICIES).optional().default('any')
+      .describe('any: at least one yes; all: every evaluation yes; none: unfiltered. Empty evaluations are included. Counts are page-local; pagination always follows provider pages.'),
     // Opt-in: also write fetched items into the local shadow store so they
     // become visible to store.listUninvestigated / the sweep-webset workflow.
     // Items created purely via the API never reach the store otherwise (only
@@ -23,6 +25,8 @@ export const Schemas = {
     websetId: z.string(),
     maxItems: z.number().optional(),
     sourceId: z.string().optional(),
+    evaluationPolicy: z.enum(EVALUATION_POLICIES).optional().default('any')
+      .describe('any: at least one yes; all: every evaluation yes; none: unfiltered. Empty evaluations are included. maxItems bounds fetched items before filtering.'),
     ingest: z.boolean().optional(),
   }),
   del: z.object({
@@ -109,7 +113,7 @@ export const list: OperationHandler = async (args, exa) => {
         );
       }
       const ingested = args.ingest ? ingestRawItems(items, args.websetId as string) : 0;
-      const projected = filterAndProjectItems(items);
+      const projected = filterAndProjectItems(items, args.evaluationPolicy as EvaluationPolicy | undefined);
       return successResult({
         ...projected,
         hasMore,
@@ -151,7 +155,7 @@ export const getAll: OperationHandler = async (args, exa) => {
       if (results.length >= maxItems) break;
     }
     const ingested = args.ingest ? ingestRawItems(results, websetId) : 0;
-    const projected = filterAndProjectItems(results);
+    const projected = filterAndProjectItems(results, args.evaluationPolicy as EvaluationPolicy | undefined);
     return successResult({ ...projected, truncated: results.length >= maxItems, ingested });
   } catch (error) {
     return errorResult('items.getAll', error);

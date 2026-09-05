@@ -35,7 +35,8 @@ export function renderWorkflowResource(key: string, meta: WorkflowMeta): string 
         ? `no (default: ${JSON.stringify(p.default)})`
         : 'no';
     const desc = p.constraints ? `${p.description} (${p.constraints})` : p.description;
-    lines.push(`| ${p.name} | ${p.type} | ${req} | ${desc} |`);
+    const escapeCell = (value: string) => value.replaceAll('|', '&#124;').replaceAll('\n', ' ');
+    lines.push(`| ${escapeCell(p.name)} | ${escapeCell(p.type)} | ${escapeCell(req)} | ${escapeCell(desc)} |`);
   }
   lines.push('');
 

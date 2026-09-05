@@ -32,7 +32,7 @@ describe('resource_link enrichment', () => {
       const meta = workflowMetadata.get('lifecycle.harvest');
       expect(meta).toBeDefined();
 
-      const res = await create({ type: 'lifecycle.harvest', args: {} }, mockExa());
+      const res = await create({ type: 'lifecycle.harvest', args: { query: 'AI companies', entity: { type: 'company' } } }, mockExa());
       expect(res.isError).toBeUndefined();
 
       // First block: JSON payload

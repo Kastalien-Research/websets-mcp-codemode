@@ -18,6 +18,7 @@ import {
   type NotebookRun,
 } from '../notebook/store.js';
 import type { Cell } from '../notebook/srcmd.js';
+import { NotebookRunInputSchema } from '../notebook/run.js';
 import { executeInSandbox } from '../tools/sandbox.js';
 
 export const Schemas = {
@@ -39,22 +40,14 @@ export const Schemas = {
   }),
   appendRun: z.object({
     slug: z.string(),
-    run: z.object({
-      timestamp: z.string().optional(),
-      verdict: z.string(),
-      confidence: z.number(),
-      evidenceFor: z.array(z.string()).optional(),
-      evidenceAgainst: z.array(z.string()).optional(),
-      blindSpots: z.array(z.string()).optional(),
-      websetIds: z.array(z.string()).optional(),
-    }),
+    run: NotebookRunInputSchema,
   }),
   runCell: z.object({
     slug: z.string(),
     cellId: z.union([z.string(), z.number()]).describe('Code cell index, or its filename'),
   }),
   list: z.object({
-    verdict: z.string().optional(),
+    verdict: z.string().optional().describe('Filter latest legacy verdicts only; retrieval runs have no verdict.'),
   }),
   render: z.object({
     slug: z.string(),
@@ -122,18 +115,12 @@ export const appendRunOp: OperationHandler = async (args) => {
   const guard = requireParams('notebook.appendRun', args, 'slug', 'run');
   if (guard) return guard;
   try {
-    const input = args.run as Partial<NotebookRun> & { verdict: string; confidence: number };
-    const run: NotebookRun = {
-      timestamp: input.timestamp ?? new Date().toISOString(),
-      verdict: input.verdict,
-      confidence: input.confidence,
-      evidenceFor: input.evidenceFor ?? [],
-      evidenceAgainst: input.evidenceAgainst ?? [],
-      blindSpots: input.blindSpots,
-      websetIds: input.websetIds,
-    };
+    const input = NotebookRunInputSchema.parse(args.run);
+    const run: NotebookRun = { ...input, timestamp: input.timestamp ?? new Date().toISOString() };
     const nb = appendRun(args.slug as string, run);
-    return successResult({ slug: nb.slug, runCount: nb.runs.length, verdict: run.verdict, confidence: run.confidence });
+    return successResult({ slug: nb.slug, runCount: nb.runs.length, ...(run.kind === 'retrieval'
+      ? { kind: run.kind, retrievalBalance: run.retrievalBalance, retrievalScore: run.retrievalScore }
+      : { verdict: run.verdict, confidence: run.confidence }) });
   } catch (error) {
     return errorResult('notebook.appendRun', error);
   }

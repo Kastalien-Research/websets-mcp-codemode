@@ -108,6 +108,14 @@ describe('tasks handlers', () => {
   });
 
   describe('list', () => {
+    it.each(['working', 'running'])('finds an active task using %s', async status => {
+      const task = taskStore.create('echo', {});
+      taskStore.updateProgress(task.id, { step: 'waiting', completed: 0, total: 1 });
+      const response = await list({ status }, mockExa());
+      const data = JSON.parse(response.content[0].text);
+      expect(data.count).toBe(1);
+      expect(data.tasks[0]).toMatchObject({ id: task.id, status: 'working' });
+    });
     it('returns empty list initially', async () => {
       const res = await list({}, mockExa());
       const data = JSON.parse(res.content[0].text);
@@ -137,6 +145,14 @@ describe('tasks handlers', () => {
   });
 
   describe('cancel', () => {
+    it('stays cancelled when the workflow later resolves', async () => {
+      const res = await create({ type: 'echo', args: { message: 'late', delayMs: 1 } }, mockExa());
+      const { taskId } = JSON.parse(res.content[0].text);
+      await cancel({ taskId }, mockExa());
+      const snapshot = structuredClone(taskStore.get(taskId));
+      await new Promise(r => setTimeout(r, 20));
+      expect(taskStore.get(taskId)).toEqual(snapshot);
+    });
     it('requires taskId', async () => {
       const res = await cancel({}, mockExa());
       expect(res.isError).toBe(true);

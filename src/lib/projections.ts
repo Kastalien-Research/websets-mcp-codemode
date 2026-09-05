@@ -1,6 +1,13 @@
 // Response projection functions — extract decision-relevant fields, drop noise.
 // Applied at the handler output boundary so workflow internals use full raw data.
 
+function pickDefined(source: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  return Object.fromEntries(keys.filter(key => source[key] !== undefined).map(key => [key, source[key]]));
+}
+
+export const EVALUATION_POLICIES = ['any', 'all', 'none'] as const;
+export type EvaluationPolicy = typeof EVALUATION_POLICIES[number];
+
 // --- Item name extraction (shared with helpers.ts:summarizeItem) ---
 
 function extractItemFields(item: Record<string, unknown>): {
@@ -32,9 +39,11 @@ function extractItemFields(item: Record<string, unknown>): {
 
 // --- Item projection ---
 
-function hasSatisfiedEvaluation(item: Record<string, unknown>): boolean {
+function matchesEvaluationPolicy(item: Record<string, unknown>, policy: EvaluationPolicy): boolean {
+  if (policy === 'none') return true;
   const evaluations = item.evaluations as Array<Record<string, unknown>> | undefined;
   if (!evaluations || evaluations.length === 0) return true; // no criteria = pass
+  if (policy === 'all') return evaluations.every(e => e.satisfied === 'yes');
   return evaluations.some(e => e.satisfied === 'yes');
 }
 
@@ -56,11 +65,13 @@ export function projectItem(item: Record<string, unknown>): Record<string, unkno
     enrichmentId: e.enrichmentId ?? null,
     description: e.description ?? null,
     format: e.format,
+    status: e.status ?? null,
     result: e.result,
   })) ?? null;
 
   return {
     id: item.id,
+    ...pickDefined(item, ['websetId', 'createdAt', 'updatedAt']),
     name,
     url,
     entityType,
@@ -70,14 +81,14 @@ export function projectItem(item: Record<string, unknown>): Record<string, unkno
   };
 }
 
-export function filterAndProjectItems(items: unknown[]): {
+export function filterAndProjectItems(items: unknown[], policy: EvaluationPolicy = 'any'): {
   data: unknown[];
   total: number;
   included: number;
   excluded: number;
 } {
   const total = items.length;
-  const passing = (items as Record<string, unknown>[]).filter(hasSatisfiedEvaluation);
+  const passing = (items as Record<string, unknown>[]).filter(item => matchesEvaluationPolicy(item, policy));
   const data = passing.map(projectItem);
   return {
     data,
@@ -102,6 +113,7 @@ export function projectWebset(webset: Record<string, unknown>): Record<string, u
 
   return {
     id: webset.id,
+    ...pickDefined(webset, ['dashboardUrl', 'url', 'items']),
     status: webset.status,
     title: webset.title ?? null,
     entityType,
@@ -146,6 +158,7 @@ export function projectSearch(search: Record<string, unknown>): Record<string, u
 
   return {
     id: search.id,
+    ...pickDefined(search, ['websetId', 'count', 'createdAt', 'updatedAt', 'recall']),
     status: search.status,
     query: search.query,
     metadata: search.metadata ?? null,
@@ -241,6 +254,7 @@ export function projectWebhookAttempt(attempt: Record<string, unknown>): Record<
 export function projectImport(imp: Record<string, unknown>): Record<string, unknown> {
   return {
     id: imp.id,
+    ...pickDefined(imp, ['uploadUrl', 'uploadValidUntil']),
     status: imp.status,
     count: imp.count ?? null,
     title: imp.title ?? null,

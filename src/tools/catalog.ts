@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { inputJsonSchema, schemaParameters } from '../lib/jsonSchema.js';
+import { workflowArgumentSchema } from '../workflows/schemas.js';
 import { OPERATIONS, OPERATION_SCHEMAS } from './operations.js';
 import { workflowRegistry, workflowMetadata } from '../workflows/types.js';
 
@@ -69,7 +71,7 @@ function buildCatalog(): CatalogEntry[] {
       domain,
       summary,
       tags: [...new Set(tags)],
-      schema: z.object({ type: z.literal(type) }).catchall(z.unknown()),
+      schema: workflowArgumentSchema(type),
     });
   }
 
@@ -77,134 +79,29 @@ function buildCatalog(): CatalogEntry[] {
   return entries;
 }
 
-interface ParamInfo {
-  name: string;
-  type: string;
-  required: boolean;
-  description?: string;
-  default?: unknown;
-}
-
-function zodShapeToParams(schema: z.ZodTypeAny): ParamInfo[] {
-  const params: ParamInfo[] = [];
-
-  let inner = schema;
-  // .refine()/.superRefine() wrap the object in ZodEffects — unwrap to the shape.
-  while (inner instanceof z.ZodEffects) {
-    inner = (inner as any)._def.schema;
-  }
-  if (inner instanceof z.ZodObject) {
-    const shape = inner.shape as Record<string, z.ZodTypeAny>;
-    for (const [key, val] of Object.entries(shape)) {
-      let typeName = 'unknown';
-      let required = true;
-      let defaultValue: unknown;
-
-      // .describe() can be called at any layer; check the outer wrapper first.
-      const outerDescription = (val as any)._def?.description as string | undefined;
-
-      let unwrapped = val;
-      if (unwrapped instanceof z.ZodOptional) {
-        required = false;
-        unwrapped = unwrapped.unwrap();
-      }
-      if (unwrapped instanceof z.ZodDefault) {
-        required = false;
-        try {
-          defaultValue = (unwrapped as any)._def.defaultValue();
-        } catch {
-          // _def.defaultValue is a thunk that may throw; ignore on failure.
-        }
-        unwrapped = unwrapped.removeDefault();
-      }
-
-      const description = outerDescription ?? ((unwrapped as any)._def?.description as string | undefined);
-
-      if (unwrapped instanceof z.ZodString) typeName = 'string';
-      else if (unwrapped instanceof z.ZodNumber) typeName = 'number';
-      else if (unwrapped instanceof z.ZodBoolean) typeName = 'boolean';
-      else if (unwrapped instanceof z.ZodArray) typeName = 'array';
-      else if (unwrapped instanceof z.ZodObject) typeName = 'object';
-      else if (unwrapped instanceof z.ZodEnum) typeName = `enum(${(unwrapped as any)._def.values.join('|')})`;
-      else if (unwrapped instanceof z.ZodLiteral) typeName = `literal(${JSON.stringify((unwrapped as any)._def.value)})`;
-
-      const param: ParamInfo = { name: key, type: typeName, required };
-      if (description) param.description = description;
-      if (defaultValue !== undefined) param.default = defaultValue;
-      params.push(param);
-    }
-  }
-
-  return params;
-}
-
-function zodToJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
-  // Simple recursive conversion — covers the shapes used in this project
-  // .refine()/.superRefine() wrap the schema in ZodEffects — unwrap to the inner type.
-  if (schema instanceof z.ZodEffects) {
-    return zodToJsonSchema((schema as any)._def.schema);
-  }
-  if (schema instanceof z.ZodObject) {
-    const shape = schema.shape as Record<string, z.ZodTypeAny>;
-    const properties: Record<string, unknown> = {};
-    const required: string[] = [];
-    for (const [key, val] of Object.entries(shape)) {
-      const outerDescription = (val as any)._def?.description as string | undefined;
-      let unwrapped = val;
-      let isOptional = false;
-      let defaultValue: unknown;
-      if (unwrapped instanceof z.ZodOptional) { isOptional = true; unwrapped = unwrapped.unwrap(); }
-      if (unwrapped instanceof z.ZodDefault) {
-        isOptional = true;
-        try {
-          defaultValue = (unwrapped as any)._def.defaultValue();
-        } catch {
-          // defaultValue thunk may throw; ignore.
-        }
-        unwrapped = unwrapped.removeDefault();
-      }
-      const description = outerDescription ?? ((unwrapped as any)._def?.description as string | undefined);
-      const propSchema = zodToJsonSchema(unwrapped) as Record<string, unknown>;
-      if (description) propSchema.description = description;
-      if (defaultValue !== undefined) propSchema.default = defaultValue;
-      properties[key] = propSchema;
-      if (!isOptional) required.push(key);
-    }
-    return { type: 'object', properties, ...(required.length > 0 ? { required } : {}) };
-  }
-  if (schema instanceof z.ZodString) return { type: 'string' };
-  if (schema instanceof z.ZodNumber) return { type: 'number' };
-  if (schema instanceof z.ZodBoolean) return { type: 'boolean' };
-  if (schema instanceof z.ZodArray) {
-    return { type: 'array', items: zodToJsonSchema((schema as any)._def.type) };
-  }
-  if (schema instanceof z.ZodEnum) {
-    return { type: 'string', enum: (schema as any)._def.values };
-  }
-  if (schema instanceof z.ZodLiteral) {
-    return { const: (schema as any)._def.value };
-  }
-  if (schema instanceof z.ZodOptional) return zodToJsonSchema(schema.unwrap());
-  if (schema instanceof z.ZodDefault) return zodToJsonSchema(schema.removeDefault());
-  return { type: 'unknown' };
-}
-
 function formatEntry(entry: CatalogEntry, detail: 'brief' | 'detailed' | 'full'): Record<string, unknown> {
   if (detail === 'brief') {
     return { name: entry.name, summary: entry.summary };
   }
+  const prose = entry.domain === 'workflow'
+    ? new Map(workflowMetadata.get(entry.name.slice('workflow.'.length))?.parameters.map(p => [p.name, p.description]) ?? [])
+    : new Map<string, string>();
   if (detail === 'detailed') {
     return {
       name: entry.name,
       summary: entry.summary,
-      params: zodShapeToParams(entry.schema),
+      params: schemaParameters(entry.schema).map(p => ({ ...p, description: prose.get(p.name) ?? p.description })),
     };
   }
-  // full
+  // Full input schema, with prose from workflow documentation where available.
+  const schema = inputJsonSchema(entry.schema);
+  for (const [name, description] of prose) {
+    if (schema.properties?.[name]) schema.properties[name].description = description;
+  }
   return {
     name: entry.name,
     summary: entry.summary,
-    schema: zodToJsonSchema(entry.schema),
+    schema,
   };
 }
 

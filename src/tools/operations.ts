@@ -137,11 +137,11 @@ export const OPERATIONS: Record<string, OperationMeta> = {
   'yelp.details': { handler: yelp.details, summary: 'Get full Yelp business details by id or alias' },
   'yelp.reviews': { handler: yelp.reviews, summary: 'Get Yelp review excerpts for a business' },
   'notebook.create': { handler: notebook.create, summary: 'Create a thesis notebook (.src.md) — durable, re-runnable Code Mode artifact' },
-  'notebook.get': { handler: notebook.get, summary: 'Get a thesis notebook: decoded cells, manifest, and verdict run history' },
+  'notebook.get': { handler: notebook.get, summary: 'Get a thesis notebook: decoded cells, manifest, tagged retrieval runs, and legacy run history' },
   'notebook.appendCell': { handler: notebook.appendCellOp, summary: 'Append a markdown or code cell to a thesis notebook' },
-  'notebook.appendRun': { handler: notebook.appendRunOp, summary: 'Append a verdict Run section to a notebook and update the latest verdict index' },
+  'notebook.appendRun': { handler: notebook.appendRunOp, summary: 'Append a tagged retrieval run or legacy verdict run and update the corresponding latest index fields' },
   'notebook.runCell': { handler: notebook.runCell, summary: 'Execute a notebook code cell through the Code Mode sandbox and append the result' },
-  'notebook.list': { handler: notebook.list, summary: 'List thesis notebooks with their latest verdict, optionally filtered by verdict' },
+  'notebook.list': { handler: notebook.list, summary: 'List thesis notebooks with latest run kind and retrieval statistics or legacy verdict; optional verdict filter applies only to latest legacy runs' },
   'notebook.render': { handler: notebook.render, summary: 'Render a thesis notebook as raw .src.md text for glassBook/Srcbook import' },
 };
 

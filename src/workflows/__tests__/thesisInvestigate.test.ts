@@ -4,39 +4,39 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { TaskStore } from '../../lib/taskStore.js';
 import { closeDb } from '../../store/db.js';
-import { computeVerdict } from '../thesisInvestigate.js';
+import { computeRetrievalStats } from '../thesisInvestigate.js';
 
 import '../thesisInvestigate.js';
 import { workflowRegistry } from '../types.js';
 
-describe('computeVerdict heuristic', () => {
+describe('computeRetrievalStats heuristic', () => {
   const opts = { minEvidence: 3, targetN: 25 };
 
-  it('supported when ratio high and enough supporting domains', () => {
-    const v = computeVerdict(8, 1, 9, opts);
-    expect(v.verdict).toBe('supported');
-    expect(v.confidence).toBeGreaterThan(0);
+  it('thesis-heavy when ratio high and enough thesis-query domains', () => {
+    const v = computeRetrievalStats(8, 1, 9, opts);
+    expect(v.retrievalBalance).toBe('thesis-heavy');
+    expect(v.retrievalScore).toBeGreaterThan(0);
   });
 
-  it('refuted when ratio low and enough countering domains', () => {
-    const v = computeVerdict(1, 8, 9, opts);
-    expect(v.verdict).toBe('refuted');
+  it('antithesis-heavy when ratio low and enough antithesis-query domains', () => {
+    const v = computeRetrievalStats(1, 8, 9, opts);
+    expect(v.retrievalBalance).toBe('antithesis-heavy');
   });
 
   it('mixed when both sides clear the threshold without a dominant ratio', () => {
-    const v = computeVerdict(5, 5, 10, opts);
-    expect(v.verdict).toBe('mixed');
+    const v = computeRetrievalStats(5, 5, 10, opts);
+    expect(v.retrievalBalance).toBe('mixed');
   });
 
-  it('inconclusive when neither side has enough evidence', () => {
-    const v = computeVerdict(2, 1, 3, opts);
-    expect(v.verdict).toBe('inconclusive');
+  it('sparse when neither query retrieved enough domains', () => {
+    const v = computeRetrievalStats(2, 1, 3, opts);
+    expect(v.retrievalBalance).toBe('sparse');
   });
 
-  it('confidence is bounded to [0,1]', () => {
-    const v = computeVerdict(100, 0, 100, { minEvidence: 3, targetN: 5 });
-    expect(v.confidence).toBeLessThanOrEqual(1);
-    expect(v.confidence).toBeGreaterThanOrEqual(0);
+  it('retrieval score is bounded to [0,1]', () => {
+    const v = computeRetrievalStats(100, 0, 100, { minEvidence: 3, targetN: 5 });
+    expect(v.retrievalScore).toBeLessThanOrEqual(1);
+    expect(v.retrievalScore).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -93,7 +93,7 @@ describe('thesis.investigate workflow', () => {
     expect(workflow).toBeDefined();
   });
 
-  it('gathers evidence, writes a verdict, and indexes the notebook', async () => {
+  it('gathers evidence, writes retrieval statistics, and indexes the notebook', async () => {
     const mockExa = createMockExa(mockItems('for', 8), mockItems('against', 1));
     const task = store.create('thesis.investigate', {
       thesis: 'Remote-first companies retain employees better',
@@ -102,20 +102,26 @@ describe('thesis.investigate workflow', () => {
 
     const result = (await workflow(task.id, task.args, mockExa, store)) as any;
 
-    expect(result.verdict).toBe('supported');
-    expect(result.supportingDomains).toBe(8);
-    expect(result.counteringDomains).toBe(1);
+    expect(result.retrievalBalance).toBe('thesis-heavy');
+    expect(result.thesisQueryDomains).toBe(8);
+    expect(result.antithesisQueryDomains).toBe(1);
     expect(result.notebookSlug).toBeTruthy();
+    expect(result).not.toHaveProperty('verdict');
+    expect(result).not.toHaveProperty('confidence');
+    expect(result.retrievalScore).toBeCloseTo((9 / 25) * Math.abs(8 / 9 - 0.5) * 2);
 
     // Notebook file written and contains a Run section
     const file = path.join(tmpDir, 'notebooks', `${result.notebookSlug}.src.md`);
     expect(fs.existsSync(file)).toBe(true);
     expect(fs.readFileSync(file, 'utf8')).toContain('### Run');
 
-    // Index updated with latest verdict (via a SELECT, like store.query)
+    // Index updated with latest retrieval balance (via a SELECT, like store.query)
     const { getNotebookIndex } = await import('../../store/db.js');
     const row = getNotebookIndex(result.notebookSlug);
-    expect(row?.latest_verdict).toBe('supported');
+    expect(row?.latest_retrieval_balance).toBe('thesis-heavy');
+    expect(row?.latest_run_kind).toBe('retrieval');
+    expect(row?.latest_verdict).toBeNull();
+    expect(row?.latest_confidence).toBeNull();
   });
 
   it('appends a second run when reusing a notebook slug', async () => {

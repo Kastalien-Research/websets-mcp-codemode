@@ -25,9 +25,9 @@ Example:
   const ws = await callOperation('websets.create', {
     searchQuery: 'AI startups in healthcare',
     entity: { type: 'company' },
-    count: 10
+    searchCount: 10
   });
-  await callOperation('websets.waitUntilIdle', { websetId: ws.id });
+  await callOperation('websets.waitUntilIdle', { id: ws.id });
   const items = await callOperation('items.getAll', { websetId: ws.id });
   return items;
 
