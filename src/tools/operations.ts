@@ -22,6 +22,7 @@ import * as connect from '../handlers/connect.js';
 import * as store from '../store/operations.js';
 import * as notebook from '../handlers/notebook.js';
 import { applyCompatCoercions, type AppliedCoercion, type CompatMode } from './coercion.js';
+import { keysAt, nearestKey, rejectUnknownKeys } from './unknownKeys.js';
 
 // Single barrel import for all workflow side-effect registrations
 import '../workflows/index.js';
@@ -147,7 +148,9 @@ export const OPERATIONS: Record<string, OperationMeta> = {
 
 export const OPERATION_NAMES = Object.keys(OPERATIONS) as [string, ...string[]];
 
-export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
+// Every operation rejects unknown keys at dispatch instead of silently dropping
+// them (see rejectUnknownKeys). Declared `.passthrough()` objects are kept.
+const DECLARED_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'websets.create': websets.Schemas.create,
   'websets.get': websets.Schemas.get,
   'websets.list': websets.Schemas.list,
@@ -254,6 +257,10 @@ export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = {
   'notebook.render': notebook.Schemas.render,
 };
 
+export const OPERATION_SCHEMAS: Record<string, z.ZodTypeAny> = Object.fromEntries(
+  Object.entries(DECLARED_SCHEMAS).map(([name, schema]) => [name, rejectUnknownKeys(schema)]),
+);
+
 export function withCoercionMetadata(
   result: ToolResult,
   coercions: AppliedCoercion[],
@@ -307,10 +314,24 @@ export function withCoercionMetadata(
   }
 }
 
+function describeUnrecognizedKeys(operation: string, path: Array<string | number>, keys: string[]): string {
+  const schema = OPERATION_SCHEMAS[operation];
+  const valid = schema ? keysAt(schema, path) : null;
+  const named = keys.map(key => {
+    const suggestion = valid ? nearestKey(key, valid) : null;
+    return suggestion ? `'${key}' (did you mean '${suggestion}'?)` : `'${key}'`;
+  });
+  const listing = valid ? ` Valid keys: ${valid.join(', ')}.` : '';
+  return `Unrecognized key${keys.length > 1 ? 's' : ''} ${named.join(', ')}; unknown keys are rejected, not ignored.${listing}`;
+}
+
 export function formatValidationError(operation: string, issues: z.ZodIssue[]): ToolResult {
   const details = issues
     .map(issue => {
       const path = issue.path.length > 0 ? issue.path.join('.') : '(root)';
+      if (issue.code === 'unrecognized_keys') {
+        return `- ${path}: ${describeUnrecognizedKeys(operation, issue.path, issue.keys)}`;
+      }
       return `- ${path}: ${issue.message}`;
     })
     .join('\n');

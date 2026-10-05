@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Exa } from 'exa-js';
-import { create, get, result, list, cancel } from '../tasks.js';
+import { create, get, result, list, cancel, Schemas } from '../tasks.js';
 
 // We need the echo workflow registered
 import '../../workflows/echo.js';
+import '../../workflows/echoEffect.js';
 
 // Access the taskStore to reset between tests
 import { TaskStore } from '../../lib/taskStore.js';
@@ -156,5 +157,42 @@ describe('tasks handlers', () => {
       const res = await cancel({ taskId: 'task_nope' }, mockExa());
       expect(res.isError).toBe(true);
     });
+  });
+});
+
+describe('tasks.create schema: workflow arguments', () => {
+  const messages = (value: unknown) => {
+    const parsed = Schemas.create.safeParse(value);
+    return parsed.success ? [] : parsed.error.issues.map(i => i.message);
+  };
+
+  it('accepts declared arguments, flattened or inside args', () => {
+    expect(messages({ type: 'echo.effect', message: 'hi', delayMs: 5 })).toEqual([]);
+    expect(messages({ type: 'echo.effect', args: { message: 'hi' } })).toEqual([]);
+  });
+
+  it('rejects an undeclared argument, naming it and the nearest declared parameter', () => {
+    expect(messages({ type: 'echo.effect', mesage: 'hi' })).toEqual([
+      'Unrecognized argument for workflow "echo.effect": \'mesage\' (did you mean \'message\'?). Declared parameters: message, delayMs.',
+    ]);
+    const parsed = Schemas.create.safeParse({ type: 'echo.effect', args: { message: 'hi', delay: 5 } });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error!.issues[0].path).toEqual(['args']);
+  });
+
+  it('rejects flattened arguments alongside args instead of dropping them', () => {
+    expect(messages({ type: 'echo.effect', args: { message: 'hi' }, delayMs: 5 })).toEqual([
+      "Pass workflow arguments either flattened or inside args, not both. Flattened keys: 'delayMs'.",
+    ]);
+  });
+
+  it('names unknown keys even when type is missing', () => {
+    expect(messages({ message: 'hi' })).toContain(
+      "Unrecognized key 'message'; workflow arguments need a task type.",
+    );
+  });
+
+  it('accepts any arguments for workflows that declare no parameters', () => {
+    expect(messages({ type: 'echo', message: 'hi', anything: true })).toEqual([]);
   });
 });

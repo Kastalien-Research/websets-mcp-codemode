@@ -4,12 +4,54 @@ import { successResult, successResultWithLinks, errorResult, requireParams } fro
 import { taskStore } from '../lib/taskStore.js';
 import { workflowRegistry, workflowMetadata } from '../workflows/types.js';
 import { WorkflowError } from '../workflows/helpers.js';
+import { nearestKey } from '../tools/unknownKeys.js';
+
+/**
+ * Workflow arguments arrive flattened or inside `args`. Check them against the
+ * workflow's declared parameters so a misspelled argument fails at dispatch
+ * instead of being ignored by the workflow. Runs as a preprocess step so it
+ * still reports unknown keys when `type` itself is missing. Workflows that
+ * declare no parameters accept any arguments; unknown types are left to the
+ * handler, which lists the available ones.
+ */
+function checkWorkflowArgs(value: unknown, ctx: z.RefinementCtx): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const { type, args, ...flattened } = value as Record<string, unknown>;
+  const flattenedKeys = Object.keys(flattened);
+
+  if (args !== undefined && flattenedKeys.length > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Pass workflow arguments either flattened or inside args, not both. Flattened keys: ${flattenedKeys.map(k => `'${k}'`).join(', ')}.`,
+    });
+    return value;
+  }
+  if (typeof type === 'string' && (!workflowRegistry.has(type) || !workflowMetadata.has(type))) return value;
+
+  const declared = workflowMetadata.get(type as string)?.parameters.map(p => p.name) ?? [];
+  const supplied = args && typeof args === 'object' && !Array.isArray(args) ? Object.keys(args) : flattenedKeys;
+  const unknown = supplied.filter(key => !declared.includes(key));
+  if (unknown.length === 0) return value;
+
+  const named = unknown.map(key => {
+    const suggestion = nearestKey(key, declared);
+    return suggestion ? `'${key}' (did you mean '${suggestion}'?)` : `'${key}'`;
+  });
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: args !== undefined ? ['args'] : [],
+    message: typeof type === 'string'
+      ? `Unrecognized argument${unknown.length > 1 ? 's' : ''} for workflow "${type}": ${named.join(', ')}. Declared parameters: ${declared.join(', ') || '(none)'}.`
+      : `Unrecognized key${unknown.length > 1 ? 's' : ''} ${named.join(', ')}; workflow arguments need a task type.`,
+  });
+  return value;
+}
 
 export const Schemas = {
-  create: z.object({
+  create: z.preprocess(checkWorkflowArgs, z.object({
     type: z.string(),
     args: z.record(z.string(), z.unknown()).optional(),
-  }).catchall(z.unknown()), // Allow flattened arguments
+  }).catchall(z.unknown())), // Flattened arguments, checked by checkWorkflowArgs
   get: z.object({
     taskId: z.string(),
   }),
