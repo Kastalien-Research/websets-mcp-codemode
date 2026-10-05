@@ -1,0 +1,918 @@
+openapi: 3.1.0
+info:
+  version: 1.0.0
+  title: Team Management API
+  description: API for managing API keys within teams. Provides CRUD operations for creating, listing, updating, and deleting API keys with team-based access controls. The API is enabled per team. Contact support@exa.ai to request access.
+servers:
+  - url: https://admin-api.exa.ai/team-management
+security:
+  - apikey: []
+paths:
+  /api-keys:
+    post:
+      operationId: create-api-key
+      summary: Create API key
+      description: Creates a new API key for the authenticated team. Optionally specify a name, rate limit, and budget for the API key.
+      x-codeSamples:
+        - lang: bash
+          label: Create API key with name and rate limit
+          source: |
+            curl -X POST 'https://admin-api.exa.ai/team-management/api-keys' \
+              -H 'x-api-key: YOUR-SERVICE-KEY' \
+              -H 'Content-Type: application/json' \
+              -d '{
+                "name": "Production API Key",
+                "rateLimit": 1000
+              }'
+        - lang: python
+          label: Create API key with name and rate limit
+          source: |
+            import requests
+
+            headers = {
+                'x-api-key': 'YOUR-SERVICE-KEY',
+                'Content-Type': 'application/json'
+            }
+
+            data = {
+                'name': 'Production API Key',
+                'rateLimit': 1000
+            }
+
+            response = requests.post(
+                'https://admin-api.exa.ai/team-management/api-keys',
+                headers=headers,
+                json=data
+            )
+
+            print(response.json())
+        - lang: javascript
+          label: Create API key with name and rate limit
+          source: |
+            const response = await fetch('https://admin-api.exa.ai/team-management/api-keys', {
+              method: 'POST',
+              headers: {
+                'x-api-key': 'YOUR-SERVICE-KEY',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                name: 'Production API Key',
+                rateLimit: 1000
+              })
+            });
+
+            const result = await response.json();
+            console.log(result);
+        - lang: bash
+          label: Create API key without optional parameters
+          source: |
+            curl -X POST 'https://admin-api.exa.ai/team-management/api-keys' \
+              -H 'x-api-key: YOUR-SERVICE-KEY' \
+              -H 'Content-Type: application/json' \
+              -d '{}'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Optional name for the API key
+                  example: "Production API Key"
+                rateLimit:
+                  type: integer
+                  description: Optional rate limit for the API key (requests per second)
+                  example: 1000
+                budgetCents:
+                  type:
+                    - integer
+                    - "null"
+                  minimum: 0
+                  description: Optional spending budget for the API key, in cents. Set to null to remove the budget.
+                  example: 5000
+              additionalProperties: false
+      responses:
+        "200":
+          description: API key created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apiKey:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                        description: Unique identifier for the API key
+                      name:
+                        type: string
+                        description: Name of the API key
+                      rateLimit:
+                        type:
+                          - integer
+                          - "null"
+                        description: Rate limit in requests per second
+                      budgetCents:
+                        type:
+                          - integer
+                          - "null"
+                        description: Spending budget for the API key, in cents
+                      isOverBudget:
+                        type: boolean
+                        description: Whether the API key is currently over its budget
+                      teamId:
+                        type: string
+                        format: uuid
+                        description: Team ID this key belongs to
+                      userId:
+                        type: string
+                        format: uuid
+                        description: User ID who created this key
+                      createdAt:
+                        type: string
+                        format: date-time
+                        description: When the key was created
+        "401":
+          description: Unauthorized - Invalid or missing service key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Unauthorized"
+        "400":
+          description: Bad Request - Invalid parameters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    examples:
+                      - "No user found for team"
+                      - "Rate limit cannot exceed team's limit of 500 QPS"
+                      - "Unexpected parameters: invalidParam. Allowed: name, rateLimit, budgetCents."
+      tags:
+        - Team Management
+      security:
+        - apikey: []
+
+    get:
+      operationId: list-api-keys
+      summary: List API keys
+      description: Returns all API keys belonging to the authenticated team. Includes ID, name, and rate limit for each key.
+      parameters:
+        - name: api_key_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional API key ID to retrieve a specific key.
+      x-codeSamples:
+        - lang: bash
+          label: List all API keys
+          source: |
+            curl -X GET 'https://admin-api.exa.ai/team-management/api-keys' \
+              -H 'x-api-key: YOUR-SERVICE-KEY'
+        - lang: python
+          label: List all API keys
+          source: |
+            import requests
+
+            headers = {
+                'x-api-key': 'YOUR-SERVICE-KEY'
+            }
+
+            response = requests.get(
+                'https://admin-api.exa.ai/team-management/api-keys',
+                headers=headers
+            )
+
+            print(response.json())
+        - lang: javascript
+          label: List all API keys
+          source: |
+            const response = await fetch('https://admin-api.exa.ai/team-management/api-keys', {
+              method: 'GET',
+              headers: {
+                'x-api-key': 'YOUR-SERVICE-KEY'
+              }
+            });
+
+            const result = await response.json();
+            console.log(result);
+      responses:
+        "200":
+          description: List of API keys retrieved successfully
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      apiKeys:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                              format: uuid
+                            name:
+                              type: string
+                            rateLimit:
+                              type:
+                                - integer
+                                - "null"
+                              description: Rate limit in requests per second
+                            budgetCents:
+                              type:
+                                - integer
+                                - "null"
+                              description: Spending budget for the API key, in cents
+                            isOverBudget:
+                              type: boolean
+                              description: Whether the API key is currently over its budget
+                  - type: object
+                    properties:
+                      apiKey:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            format: uuid
+                          name:
+                            type: string
+                          rateLimit:
+                            type:
+                              - integer
+                              - "null"
+                            description: Rate limit in requests per second
+                          budgetCents:
+                            type:
+                              - integer
+                              - "null"
+                            description: Spending budget for the API key, in cents
+                          isOverBudget:
+                            type: boolean
+                            description: Whether the API key is currently over its budget
+                          teamId:
+                            type: string
+                            format: uuid
+                          createdAt:
+                            type: string
+                            format: date-time
+        "400":
+          description: Bad request - invalid API key ID format
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid API key ID format."
+        "401":
+          description: Unauthorized - Invalid or missing service key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Unauthorized"
+        "403":
+          description: Forbidden - insufficient permissions to access this API key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Insufficient permissions to access this API key"
+        "404":
+          description: Not found - API key or team not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    examples:
+                      - "API key not found"
+                      - "Team not found"
+      tags:
+        - Team Management
+      security:
+        - apikey: []
+
+  /api-keys/{id}:
+    get:
+      operationId: get-api-key
+      summary: Get API key
+      description: Retrieves details of a specific API key by its ID.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The unique identifier of the API key.
+      x-codeSamples:
+        - lang: bash
+          label: Get a specific API key
+          source: |
+            curl -X GET 'https://admin-api.exa.ai/team-management/api-keys/{id}' \
+              -H 'x-api-key: YOUR-SERVICE-KEY'
+      responses:
+        "200":
+          description: API key retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apiKey:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      name:
+                        type: string
+                      rateLimit:
+                        type:
+                          - integer
+                          - "null"
+                        description: Rate limit in requests per second
+                      budgetCents:
+                        type:
+                          - integer
+                          - "null"
+                        description: Spending budget for the API key, in cents
+                      isOverBudget:
+                        type: boolean
+                        description: Whether the API key is currently over its budget
+                      teamId:
+                        type: string
+                        format: uuid
+                      createdAt:
+                        type: string
+                        format: date-time
+        "400":
+          description: Bad request - invalid API key ID format
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid API key ID format."
+        "401":
+          description: Unauthorized - Invalid or missing service key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Unauthorized"
+        "404":
+          description: Not found - API key does not exist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "API key not found"
+      tags:
+        - Team Management
+      security:
+        - apikey: []
+    put:
+      operationId: update-api-key
+      summary: Update API key
+      description: Updates an existing API key's name and/or rate limit. Only API keys belonging to the authenticated team can be updated.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The unique identifier of the API key to update.
+      x-codeSamples:
+        - lang: bash
+          label: Update API key name and rate limit
+          source: |
+            curl -X PUT 'https://admin-api.exa.ai/team-management/api-keys/{id}' \
+              -H 'x-api-key: YOUR-SERVICE-KEY' \
+              -H 'Content-Type: application/json' \
+              -d '{
+                "name": "Updated Production Key",
+                "rateLimit": 2000
+              }'
+        - lang: python
+          label: Update API key name and rate limit
+          source: |
+            import requests
+
+            headers = {
+                'x-api-key': 'YOUR-SERVICE-KEY',
+                'Content-Type': 'application/json'
+            }
+
+            data = {
+                'name': 'Updated Production Key',
+                'rateLimit': 2000
+            }
+
+            response = requests.put(
+                'https://admin-api.exa.ai/team-management/api-keys/{id}',
+                headers=headers,
+                json=data
+            )
+
+            print(response.json())
+        - lang: javascript
+          label: Update API key name and rate limit
+          source: |
+            const response = await fetch('https://admin-api.exa.ai/team-management/api-keys/{id}', {
+              method: 'PUT',
+              headers: {
+                'x-api-key': 'YOUR-SERVICE-KEY',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                name: 'Updated Production Key',
+                rateLimit: 2000
+              })
+            });
+
+            const result = await response.json();
+            console.log(result);
+        - lang: bash
+          label: Update only the name
+          source: |
+            curl -X PUT 'https://admin-api.exa.ai/team-management/api-keys/{id}' \
+              -H 'x-api-key: YOUR-SERVICE-KEY' \
+              -H 'Content-Type: application/json' \
+              -d '{
+                "name": "New Name Only"
+              }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Optional new name for the API key
+                  example: "Updated Production Key"
+                rateLimit:
+                  type: integer
+                  description: Optional new rate limit for the API key (requests per second)
+                  example: 2000
+                budgetCents:
+                  type:
+                    - integer
+                    - "null"
+                  minimum: 0
+                  description: Optional new spending budget for the API key, in cents. Set to null to remove the budget.
+                  example: 5000
+              additionalProperties: false
+      responses:
+        "200":
+          description: API key updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apiKey:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      name:
+                        type: string
+                      rateLimit:
+                        type:
+                          - integer
+                          - "null"
+                        description: Rate limit in requests per second
+                      budgetCents:
+                        type:
+                          - integer
+                          - "null"
+                        description: Spending budget for the API key, in cents
+                      isOverBudget:
+                        type: boolean
+                        description: Whether the API key is currently over its budget
+                      teamId:
+                        type: string
+                        format: uuid
+                      userId:
+                        type: string
+                        format: uuid
+                      createdAt:
+                        type: string
+                        format: date-time
+                      updatedAt:
+                        type: string
+                        format: date-time
+        "401":
+          description: Unauthorized - Invalid or missing service key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Unauthorized"
+        "403":
+          description: Forbidden - API key belongs to a different team
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "You do not have permission to access this API key"
+        "404":
+          description: Not Found - API key does not exist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "API key not found"
+        "400":
+          description: Bad Request - Invalid parameters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    examples:
+                      - "api_key_id is required"
+                      - "Invalid API key ID format."
+      tags:
+        - Team Management
+      security:
+        - apikey: []
+    delete:
+      operationId: delete-api-key
+      summary: Delete API key
+      description: Deletes an API key. Only API keys belonging to the authenticated team can be deleted.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The unique identifier of the API key to delete.
+      x-codeSamples:
+        - lang: bash
+          label: Delete an API key
+          source: |
+            curl -X DELETE 'https://admin-api.exa.ai/team-management/api-keys/{id}' \
+              -H 'x-api-key: YOUR-SERVICE-KEY'
+        - lang: python
+          label: Delete an API key
+          source: |
+            import requests
+
+            headers = {
+                'x-api-key': 'YOUR-SERVICE-KEY',
+                'Content-Type': 'application/json'
+            }
+
+            response = requests.delete(
+                'https://admin-api.exa.ai/team-management/api-keys/{id}',
+                headers=headers
+            )
+
+            print(response.json())
+        - lang: javascript
+          label: Delete an API key
+          source: |
+            const response = await fetch('https://admin-api.exa.ai/team-management/api-keys/{id}', {
+              method: 'DELETE',
+              headers: {
+                'x-api-key': 'YOUR-SERVICE-KEY'
+              }
+            });
+
+            const result = await response.json();
+            console.log(result);
+      responses:
+        "200":
+          description: API key deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        "401":
+          description: Unauthorized - Invalid or missing service key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Unauthorized"
+        "403":
+          description: Forbidden - API key belongs to a different team
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "You do not have permission to access this API key"
+        "404":
+          description: Not Found - API key does not exist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "API key not found"
+        "400":
+          description: Bad Request - Invalid parameters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    examples:
+                      - "api_key_id is required"
+                      - "Invalid API key ID format."
+      tags:
+        - Team Management
+      security:
+        - apikey: []
+
+  /api-keys/{id}/usage:
+    get:
+      operationId: get-api-key-usage
+      summary: Get API key usage
+      description: Retrieves usage analytics and billing data for a specific API key over a given time period. Returns cost breakdown by price type from the billing system.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The unique identifier of the API key.
+        - name: start_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Start date for the usage period (ISO 8601 format). Defaults to 30 days ago. Must be within the last 6 months (180 days).
+          example: "2025-01-01T00:00:00Z"
+        - name: end_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: End date for the usage period (ISO 8601 format). Defaults to current time.
+          example: "2025-01-31T23:59:59Z"
+        - name: group_by
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [hour, day, month]
+          description: Time granularity for grouping results. Currently reserved for future enhancements and does not change the response shape. Defaults to 'day'.
+          example: "day"
+      x-codeSamples:
+        - lang: bash
+          label: Get usage for the last 30 days (default)
+          source: |
+            curl -X GET 'https://admin-api.exa.ai/team-management/api-keys/{id}/usage' \
+              -H 'x-api-key: YOUR-SERVICE-KEY'
+        - lang: bash
+          label: Get usage for a specific date range
+          source: |
+            curl -X GET 'https://admin-api.exa.ai/team-management/api-keys/{id}/usage?start_date=2025-01-01&end_date=2025-01-31' \
+              -H 'x-api-key: YOUR-SERVICE-KEY'
+        - lang: python
+          label: Get usage for a specific date range
+          source: |
+            import requests
+            from datetime import datetime, timedelta
+
+            headers = {
+                'x-api-key': 'YOUR-SERVICE-KEY'
+            }
+
+            params = {
+                'start_date': '2025-01-01T00:00:00Z',
+                'end_date': '2025-01-31T23:59:59Z'
+            }
+
+            response = requests.get(
+                'https://admin-api.exa.ai/team-management/api-keys/{id}/usage',
+                headers=headers,
+                params=params
+            )
+
+            print(response.json())
+        - lang: javascript
+          label: Get usage for a specific date range
+          source: |
+            const params = new URLSearchParams({
+              start_date: '2025-01-01T00:00:00Z',
+              end_date: '2025-01-31T23:59:59Z'
+            });
+
+            const response = await fetch(
+              `https://admin-api.exa.ai/team-management/api-keys/{id}/usage?${params}`,
+              {
+                method: 'GET',
+                headers: {
+                  'x-api-key': 'YOUR-SERVICE-KEY'
+                }
+              }
+            );
+
+            const result = await response.json();
+            console.log(result);
+      responses:
+        "200":
+          description: Usage data retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: The unique identifier of the API key.
+                  api_key_id:
+                    type: string
+                    format: uuid
+                    description: The API key ID.
+                  api_key_name:
+                    type:
+                      - string
+                      - "null"
+                    description: The name of the API key
+                  team_id:
+                    type: string
+                    format: uuid
+                    description: The team ID this key belongs to
+                  period:
+                    type: object
+                    properties:
+                      start:
+                        type: string
+                        format: date-time
+                        description: Start of the usage period
+                      end:
+                        type: string
+                        format: date-time
+                        description: End of the usage period
+                  total_cost_usd:
+                    type: number
+                    description: Total cost in USD for the period
+                    example: 45.67
+                  cost_breakdown:
+                    type: array
+                    description: Breakdown of costs by price type
+                    items:
+                      type: object
+                      properties:
+                        price_id:
+                          type: string
+                          description: Unique identifier for the price
+                        price_name:
+                          type: string
+                          description: Name of the price (e.g., "Neural Search", "Content Retrieval")
+                        quantity:
+                          type: number
+                          description: Total quantity consumed
+                        amount_usd:
+                          type: number
+                          description: Cost in USD for this price type
+                  metadata:
+                    type: object
+                    properties:
+                      generated_at:
+                        type: string
+                        format: date-time
+                        description: When this report was generated
+              example:
+                id: "key_abc123def456"
+                api_key_id: "550e8400-e29b-41d4-a716-446655440000"
+                api_key_name: "Production API Key"
+                team_id: "660e8400-e29b-41d4-a716-446655440000"
+                period:
+                  start: "2025-01-01T00:00:00Z"
+                  end: "2025-01-31T23:59:59Z"
+                total_cost_usd: 45.67
+                cost_breakdown:
+                  - price_id: "price_neural_search"
+                    price_name: "Neural Search"
+                    quantity: 1000
+                    amount_usd: 30.00
+                  - price_id: "price_content_retrieval"
+                    price_name: "Content Retrieval"
+                    quantity: 500
+                    amount_usd: 15.67
+                metadata:
+                  generated_at: "2025-02-01T10:30:00Z"
+        "400":
+          description: Bad Request - Invalid parameters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    examples:
+                      - "Invalid API key ID format."
+                      - "Invalid date format. Use ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)"
+                      - "start_date must be before end_date"
+                      - "Date range too far in the past. start_date must be within the last 6 months."
+                      - "Invalid group_by parameter. Must be one of: hour, day, month"
+        "401":
+          description: Unauthorized - Invalid or missing service key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Unauthorized"
+        "404":
+          description: Not Found - API key does not exist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "API key not found"
+        "500":
+          description: Internal Server Error - Failed to fetch usage data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Failed to fetch usage data. Please try again later."
+      tags:
+        - Team Management
+      security:
+        - apikey: []
+
+components:
+  securitySchemes:
+    apikey:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Service API key for team authentication
