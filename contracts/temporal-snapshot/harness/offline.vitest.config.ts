@@ -18,6 +18,10 @@ export default defineConfig({
       '**/integration/**',
     ],
     setupFiles: [fileURLToPath(new URL('./net-guard.setup.ts', import.meta.url))],
+    // vitest 1.x defaults to worker threads, where native addons
+    // (better-sqlite3) intermittently SIGSEGV on teardown: 2/8 runs crashed
+    // with threads, 0/20 with forks.
+    pool: 'forks',
     testTimeout: 60_000,
     hookTimeout: 30_000,
     fileParallelism: false,

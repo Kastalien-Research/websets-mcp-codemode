@@ -78,7 +78,7 @@ export const GLOBAL_INVARIANTS: Invariant[] = [
     statement:
       'The offline test suite (every vitest file except `src/__tests__/e2e/**` and `**/integration/**`) MUST report zero failures, and its passed count MUST be at least the S0 baseline minus the baseline tests of files the contract allows to be deleted.',
     checkedBy:
-      'Runs vitest with the contract harness config and a JSON reporter, then compares counts with fixtures/baseline.json. A run that dies without writing a report is retried at most twice and fails if it never completes; test failures are never retried.',
+      'Runs vitest with the contract harness config (forked-process pool) and a JSON reporter, then compares counts with fixtures/baseline.json. A run that dies without writing a report is retried at most twice and fails if it never completes; test failures are never retried.',
   },
   {
     id: 'G3',
