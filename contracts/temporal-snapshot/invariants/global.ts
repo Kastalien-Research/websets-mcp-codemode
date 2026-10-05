@@ -12,7 +12,11 @@ import { renderContract } from '../render.js';
 const tail = (s: string, n = 1500) => (s.length > n ? `...${s.slice(-n)}` : s);
 
 interface SuiteRun {
+  /** True only when vitest exited normally and wrote its JSON report. */
+  completed: boolean;
   exitCode: number;
+  signal: string | null;
+  attempts: number;
   passed: number;
   failed: number;
   skipped: number;
@@ -22,10 +26,21 @@ interface SuiteRun {
   output: string;
 }
 
+/** Attempts allowed when vitest dies without writing a report (infrastructure, never test failures). */
+const SUITE_ATTEMPTS = 3;
+
 function runOfflineSuite(env: CheckEnv): SuiteRun {
   const cached = env.memo.get('offlineSuite') as SuiteRun | undefined;
   if (cached) return cached;
+  let run = runOfflineSuiteOnce(env, 1);
+  while (!run.completed && run.failed === 0 && run.attempts < SUITE_ATTEMPTS) {
+    run = runOfflineSuiteOnce(env, run.attempts + 1);
+  }
+  env.memo.set('offlineSuite', run);
+  return run;
+}
 
+function runOfflineSuiteOnce(env: CheckEnv, attempt: number): SuiteRun {
   const scratch = mkdtempSync(join(tmpdir(), 'contract-suite-'));
   const jsonOut = join(scratch, 'vitest.json');
   const netLog = join(scratch, 'net.log');
@@ -40,7 +55,10 @@ function runOfflineSuite(env: CheckEnv): SuiteRun {
   );
 
   const run: SuiteRun = {
+    completed: false,
     exitCode: proc.status ?? -1,
+    signal: proc.signal ?? (proc.error ? `spawn error: ${proc.error.message}` : null),
+    attempts: attempt,
     passed: 0,
     failed: 0,
     skipped: 0,
@@ -65,11 +83,23 @@ function runOfflineSuite(env: CheckEnv): SuiteRun {
       run.passed += filePassed;
     }
     run.failed = run.failingTests.length;
+    run.completed = proc.status !== null && Object.keys(run.perFile).length > 0;
   }
   rmSync(scratch, { recursive: true, force: true });
-  env.memo.set('offlineSuite', run);
   return run;
 }
+
+const suiteMeasurements = (run: SuiteRun) => ({
+  passed: run.passed,
+  failed: run.failed,
+  skipped: run.skipped,
+  exitCode: run.exitCode,
+  attempts: run.attempts,
+  ...(run.signal ? { signal: run.signal } : {}),
+});
+
+const incomplete = (run: SuiteRun) =>
+  `offline suite did not complete after ${run.attempts} attempt(s) (exit ${run.exitCode}, signal ${run.signal ?? 'none'}): ${tail(run.output)}`;
 
 async function registeredOperations(env: CheckEnv): Promise<string[]> {
   const mod = await import(pathToFileURL(join(env.root, 'src/tools/operations.ts')).href);
@@ -88,7 +118,8 @@ export const checks: Record<string, Check> = {
 
   async G2(env) {
     const run = runOfflineSuite(env);
-    const m = { passed: run.passed, failed: run.failed, skipped: run.skipped, exitCode: run.exitCode };
+    const m = suiteMeasurements(run);
+    if (!run.completed && run.failed === 0) return fail(incomplete(run), m);
     if (run.exitCode !== 0 || run.failed > 0) {
       return fail(
         `offline suite exit ${run.exitCode}, ${run.failed} failing: ${run.failingTests.slice(0, 10).join('; ') || tail(run.output)}`,
@@ -110,6 +141,8 @@ export const checks: Record<string, Check> = {
 
   async G3(env) {
     const run = runOfflineSuite(env);
+    // A suite that never ran cannot certify that it made no requests.
+    if (!run.completed) return fail(incomplete(run), { attempts: run.netAttempts.length });
     return run.netAttempts.length === 0
       ? pass('no outbound non-loopback requests during the offline suite', { attempts: 0 })
       : fail(`blocked outbound requests: ${[...new Set(run.netAttempts)].join(', ')}`, { attempts: run.netAttempts.length });

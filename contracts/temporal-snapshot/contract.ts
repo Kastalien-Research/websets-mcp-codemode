@@ -78,7 +78,7 @@ export const GLOBAL_INVARIANTS: Invariant[] = [
     statement:
       'The offline test suite (every vitest file except `src/__tests__/e2e/**` and `**/integration/**`) MUST report zero failures, and its passed count MUST be at least the S0 baseline minus the baseline tests of files the contract allows to be deleted.',
     checkedBy:
-      'Runs vitest with the contract harness config and a JSON reporter, then compares counts with fixtures/baseline.json.',
+      'Runs vitest with the contract harness config and a JSON reporter, then compares counts with fixtures/baseline.json. A run that dies without writing a report is retried at most twice and fails if it never completes; test failures are never retried.',
   },
   {
     id: 'G3',
@@ -86,7 +86,7 @@ export const GLOBAL_INVARIANTS: Invariant[] = [
     statement:
       'The offline test suite MUST make zero outbound requests to non-loopback hosts (no live Exa spend from tests).',
     checkedBy:
-      'A vitest setup file replaces global fetch before any module loads, blocks non-loopback hosts and logs each attempt; the log must be empty.',
+      'A vitest setup file replaces global fetch before any module loads, blocks non-loopback hosts and logs each attempt; the suite must have completed and the log must be empty.',
   },
   {
     id: 'G4',
@@ -141,8 +141,8 @@ export const PROCESS_INVARIANTS: Invariant[] = [
   {
     id: 'P5',
     scope: 'process',
-    statement: 'The ledger MUST be append-only: the ledger at HEAD extends the ledger at the transition base.',
-    checkedBy: 'Prefix comparison of `git show base:ledger.jsonl` and the ledger at HEAD.',
+    statement: 'The ledger MUST be append-only: every committed revision of the ledger extends the previous one.',
+    checkedBy: 'Walks `git log -- ledger.jsonl` up to HEAD and prefix-compares consecutive revisions.',
   },
   {
     id: 'P6',

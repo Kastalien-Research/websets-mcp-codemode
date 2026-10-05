@@ -56,7 +56,9 @@ export type LedgerEntry =
   | { type: 'spend'; at: string; endpoint: string; snapshotAsOf: string; requestId: string | null; purpose: string };
 
 export function git(root: string, args: string[]): string {
-  return execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim();
+  return execFileSync('git', args, {
+    cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
 }
 
 export function repoRoot(): string {
@@ -232,17 +234,23 @@ export function processVerdicts(root: string, headDir: string, head: string, t: 
     ? pass(`${changed.length} changed files, all within scope`, { changedFiles: changed.length })
     : fail(`outside ${t.id} scope: ${outside.join(', ')}`, { changedFiles: changed.length }));
 
-  // P5: append-only ledger.
-  let baseLedger = '';
-  try {
-    baseLedger = git(root, ['show', `${base}:${LEDGER_PATH}`]);
-  } catch {
-    baseLedger = '';
+  // P5: append-only ledger, across every committed revision up to HEAD.
+  const revisions = git(root, ['log', '--format=%H', '--reverse', head, '--', LEDGER_PATH]).split('\n').filter(Boolean);
+  const rewrites: string[] = [];
+  let previous = '';
+  for (const rev of revisions) {
+    let content = '';
+    try {
+      content = git(root, ['show', `${rev}:${LEDGER_PATH}`]);
+    } catch {
+      content = ''; // deleted in this revision
+    }
+    if (!content.startsWith(previous)) rewrites.push(rev.slice(0, 8));
+    previous = content;
   }
-  const headLedger = existsSync(join(headDir, LEDGER_PATH)) ? readFileSync(join(headDir, LEDGER_PATH), 'utf8').trim() : '';
-  add('P5', headLedger.startsWith(baseLedger)
-    ? pass('ledger at HEAD extends the ledger at base')
-    : fail('ledger at HEAD rewrites entries present at base'));
+  add('P5', rewrites.length === 0
+    ? pass(`${revisions.length} ledger revisions, each extends the previous`, { revisions: revisions.length })
+    : fail(`ledger rewritten (not appended) in ${rewrites.join(', ')}`, { revisions: revisions.length }));
 
   // P6: isolation. The orchestrator only reaches this point from a fresh worktree.
   add('P6', cleanAtStart

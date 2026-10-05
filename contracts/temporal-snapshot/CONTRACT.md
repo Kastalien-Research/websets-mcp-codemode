@@ -20,8 +20,8 @@ an isolated Claude Agent SDK judge, recorded in the ledger, and never block a tr
 | ID | Statement | Checked by |
 |---|---|---|
 | G1 | The project MUST typecheck: `tsc --noEmit` exits 0. | Runs `tsc --noEmit -p tsconfig.json` in the verified checkout. |
-| G2 | The offline test suite (every vitest file except `src/__tests__/e2e/**` and `**/integration/**`) MUST report zero failures, and its passed count MUST be at least the S0 baseline minus the baseline tests of files the contract allows to be deleted. | Runs vitest with the contract harness config and a JSON reporter, then compares counts with fixtures/baseline.json. |
-| G3 | The offline test suite MUST make zero outbound requests to non-loopback hosts (no live Exa spend from tests). | A vitest setup file replaces global fetch before any module loads, blocks non-loopback hosts and logs each attempt; the log must be empty. |
+| G2 | The offline test suite (every vitest file except `src/__tests__/e2e/**` and `**/integration/**`) MUST report zero failures, and its passed count MUST be at least the S0 baseline minus the baseline tests of files the contract allows to be deleted. | Runs vitest with the contract harness config and a JSON reporter, then compares counts with fixtures/baseline.json. A run that dies without writing a report is retried at most twice and fails if it never completes; test failures are never retried. |
+| G3 | The offline test suite MUST make zero outbound requests to non-loopback hosts (no live Exa spend from tests). | A vitest setup file replaces global fetch before any module loads, blocks non-loopback hosts and logs each attempt; the suite must have completed and the log must be empty. |
 | G4 | The operation registry MUST contain every S0 operation except the allowed removals (`research.*`). | Imports OPERATIONS and diffs its keys against fixtures/baseline.json. |
 | G5 | CONTRACT.md MUST be byte-identical to the rendering of contract.ts. | Renders contract.ts and compares it with the committed CONTRACT.md. |
 
@@ -35,7 +35,7 @@ Allowed removals: `research.create`, `research.get`, `research.list`, `research.
 | P2 | Transitions MUST advance one state at a time, in order: advancing to Sk requires the last recorded state to be S(k-1). | Reads `advance` entries from the ledger. |
 | P3 | Checks come before code: a `check-lock` entry MUST pin the hash of the target state's check file before any commit of the transition touches files outside the contract directory, and at advance the check file MUST still match the latest pin. | Walks commits between the transition base and HEAD; compares the check file hash at HEAD with the latest `check-lock`. |
 | P4 | Frame condition: every file changed between the transition base and HEAD MUST match the transition scope or the always-allowed set. | `git diff --name-only base..HEAD`, matched against globs. |
-| P5 | The ledger MUST be append-only: the ledger at HEAD extends the ledger at the transition base. | Prefix comparison of `git show base:ledger.jsonl` and the ledger at HEAD. |
+| P5 | The ledger MUST be append-only: every committed revision of the ledger extends the previous one. | Walks `git log -- ledger.jsonl` up to HEAD and prefix-compares consecutive revisions. |
 | P6 | Advance verdicts MUST come from a fresh worktree of a committed HEAD, with a clean working tree and no Exa or Anthropic credentials in the verifier environment. | The orchestrator refuses to advance on a dirty tree, creates the worktree itself, and launches the verifier with an allowlisted environment. |
 | P7 | Live Snapshot requests made by contract tooling MUST total at most 10 over the whole process (from S3, the server's own spend ledger counts too). | Sums `spend` entries in the ledger (plus the S3 spend table once it exists). |
 
