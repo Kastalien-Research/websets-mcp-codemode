@@ -1,1 +1,2 @@
 {"type":"lock","at":"2026-10-05T23:42:20.061Z","commit":"8c58b8d99db6aafd6fcb0331b41000c7f147804f","contractHash":"e6143022ec0dfd6dc54b4e79f10ec54311d5d010f3d585b2c61a554035e69090"}
+{"type":"check-lock","at":"2026-10-05T23:42:20.416Z","transition":"T1","file":"contracts/temporal-snapshot/invariants/s1.ts","hash":"f1b6d22c175b7b30f9e643c6adffe84d0776c6cbe53a3c82160000f6259ce82a","commit":"9c40a27d82bd5f015866b02d44926444dc22cd9a"}
