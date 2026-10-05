@@ -210,18 +210,21 @@ export function processVerdicts(root: string, headDir: string, head: string, t: 
     add('P3', fail(`no check-lock entry for ${t.id} (${checkFile})`));
   } else {
     const first = checkLocks[0];
-    const latest = checkLocks[checkLocks.length - 1];
     const firstIdx = commits.indexOf(first.commit);
     // Commits up to and including the one the first check-lock pinned must be
     // contract-only. A check-lock taken at the base itself has no such commits.
     const preLock = first.commit === base ? [] : commits.slice(0, firstIdx < 0 ? commits.length : firstIdx + 1);
     const early = preLock.filter(c => git(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', c])
       .split('\n').filter(Boolean).some(f => !f.startsWith(`${CONTRACT_DIR}/`)));
-    const headCheckHash = fileHash(headDir, checkFile);
+    // Every check file ever pinned (earlier states included, since they are
+    // re-checked at every advance) must still match its latest pin.
+    const latestPins = new Map<string, string>();
+    for (const e of ledger) if (e.type === 'check-lock') latestPins.set(e.file, e.hash);
+    const drifted = [...latestPins].filter(([file, hash]) => fileHash(headDir, file) !== hash).map(([file]) => file);
     const problems: string[] = [];
     if (first.commit !== base && firstIdx < 0) problems.push(`first check-lock commit ${first.commit.slice(0, 8)} is not between base and HEAD`);
     if (early.length > 0) problems.push(`implementation commits before the check-lock: ${early.map(c => c.slice(0, 8)).join(', ')}`);
-    if (headCheckHash !== latest.hash) problems.push(`${checkFile} at HEAD does not match the latest check-lock`);
+    if (drifted.length > 0) problems.push(`check files changed since their latest check-lock: ${drifted.join(', ')}`);
     add('P3', problems.length === 0
       ? pass(`${checkFile} pinned before implementation (${checkLocks.length} lock(s))`, { relocks: checkLocks.length - 1 })
       : fail(problems.join('; '), { relocks: checkLocks.length - 1 }));

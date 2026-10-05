@@ -128,9 +128,9 @@ export const PROCESS_INVARIANTS: Invariant[] = [
     id: 'P3',
     scope: 'process',
     statement:
-      'Checks come before code: a `check-lock` entry MUST pin the hash of the target state\'s check file before any commit of the transition touches files outside the contract directory, and at advance the check file MUST still match the latest pin.',
+      'Checks come before code: a `check-lock` entry MUST pin the hash of the target state\'s check file before any commit of the transition touches files outside the contract directory, and at every advance each check file ever pinned (earlier states included) MUST still match its latest pin; re-pins are allowed and recorded.',
     checkedBy:
-      'Walks commits between the transition base and HEAD; compares the check file hash at HEAD with the latest `check-lock`.',
+      'Walks commits between the transition base and HEAD; compares every pinned check file at HEAD with its latest `check-lock`.',
   },
   {
     id: 'P4',

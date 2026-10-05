@@ -112,6 +112,12 @@ export const checks: Record<string, Check> = {
       }
     }
     const m = { strict, passthrough, strip: stripped.length };
+    // Every operation schema is an object, so a walk that finds fewer objects
+    // than operations is not seeing the schemas (e.g. zod internals changed).
+    const operations = Object.keys(OPERATION_SCHEMAS).length;
+    if (strict + passthrough + stripped.length < operations) {
+      return fail(`walk found ${strict + passthrough + stripped.length} object schemas for ${operations} operations; the walker is not seeing them`, m);
+    }
     return stripped.length === 0
       ? pass(`no strip-mode object schemas (${strict} strict, ${passthrough} passthrough/catchall)`, m)
       : fail(`${stripped.length} strip-mode object schemas: ${stripped.slice(0, 25).join(', ')}${stripped.length > 25 ? ', ...' : ''}`, m);
@@ -154,7 +160,11 @@ export const checks: Record<string, Check> = {
     for (const k of cases) {
       const rec = recordingClient();
       const result = await dispatchOperation(k.op, k.args, rec.client);
-      if (result.isError && textOf(result).includes('snapshotAsOf')) outcomes.push(`${k.name}: rejected`);
+      // A rejection must happen before any request and name the key itself
+      // (quoted, as the error formatter does), not merely list it as valid.
+      if (result.isError && rec.calls.length === 0 && textOf(result).includes("'snapshotAsOf'")) {
+        outcomes.push(`${k.name}: rejected`);
+      }
       else if (k.forwarded(rec.calls)) outcomes.push(`${k.name}: forwarded`);
       else violations.push(`${k.name}: silently dropped (calls: ${rec.calls.map(c => c.path).join(', ') || 'none'})`);
     }
