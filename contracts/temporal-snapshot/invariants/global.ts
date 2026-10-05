@@ -5,8 +5,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ALLOWED_REMOVALS, ALLOWED_REMOVED_TEST_FILES } from '../contract.js';
-import { fail, pass, verifierEnv, type Check, type CheckEnv } from '../kernel.js';
+import {
+  ALLOWED_REMOVALS,
+  ALLOWED_REMOVED_TEST_FILES,
+  CRITERIA,
+  GLOBAL_INVARIANTS,
+  PROCESS_INVARIANTS,
+  STATES,
+  TRANSITIONS,
+} from '../contract.js';
+import { fail, pass, STATE_IDS, TRANSITION_IDS, verifierEnv, type Check, type CheckEnv } from '../kernel.js';
 import { renderContract } from '../render.js';
 
 const tail = (s: string, n = 1500) => (s.length > n ? `...${s.slice(-n)}` : s);
@@ -162,8 +170,26 @@ export const checks: Record<string, Check> = {
   async G5(env) {
     const path = join(env.root, 'contracts/temporal-snapshot/CONTRACT.md');
     if (!existsSync(path)) return fail('CONTRACT.md is missing');
-    return readFileSync(path, 'utf8') === renderContract()
-      ? pass('CONTRACT.md matches the rendering of contract.ts')
-      : fail('CONTRACT.md differs from the rendering of contract.ts; run `run.ts render`');
+    const problems: string[] = [];
+    if (readFileSync(path, 'utf8') !== renderContract()) {
+      problems.push('CONTRACT.md differs from the rendering of contract.ts; run `run.ts render`');
+    }
+
+    // Well-formedness: a state with no invariants would hold vacuously.
+    const ids = [
+      ...GLOBAL_INVARIANTS, ...PROCESS_INVARIANTS, ...STATES.flatMap(s => s.invariants),
+    ].map(i => i.id).concat(CRITERIA.map(c => c.id));
+    const duplicates = ids.filter((id, i) => ids.indexOf(id) !== i);
+    if (duplicates.length > 0) problems.push(`duplicate ids: ${[...new Set(duplicates)].join(', ')}`);
+    const empty = STATES.filter(s => s.id !== 'S0' && s.invariants.length === 0).map(s => s.id);
+    if (empty.length > 0) problems.push(`states without invariants: ${empty.join(', ')}`);
+    if (STATES.map(s => s.id).join() !== STATE_IDS.join()) problems.push('states are not S0..S5 in order');
+    const chainBroken = TRANSITIONS.some((t, i) => t.id !== TRANSITION_IDS[i] || t.from !== STATE_IDS[i] || t.to !== STATE_IDS[i + 1]);
+    if (chainBroken || TRANSITIONS.length !== TRANSITION_IDS.length) problems.push('transitions do not chain S0 -> S5 one step at a time');
+    if (!STATES[STATES.length - 1].terminal) problems.push('the last state is not marked terminal');
+
+    return problems.length === 0
+      ? pass(`CONTRACT.md matches contract.ts; ${ids.length} unique ids, every state after S0 has invariants, transitions chain S0 -> S5`)
+      : fail(problems.join('; '));
   },
 };

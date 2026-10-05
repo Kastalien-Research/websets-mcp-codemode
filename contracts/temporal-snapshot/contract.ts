@@ -98,8 +98,9 @@ export const GLOBAL_INVARIANTS: Invariant[] = [
   {
     id: 'G5',
     scope: 'global',
-    statement: 'CONTRACT.md MUST be byte-identical to the rendering of contract.ts.',
-    checkedBy: 'Renders contract.ts and compares it with the committed CONTRACT.md.',
+    statement:
+      'CONTRACT.md MUST be byte-identical to the rendering of contract.ts, and the contract MUST be well-formed: unique ids, at least one invariant in every state after S0, and transitions that chain S0 to the terminal state one step at a time.',
+    checkedBy: 'Renders contract.ts and compares it with the committed CONTRACT.md, then checks ids, state invariant counts and the transition chain.',
   },
 ];
 
