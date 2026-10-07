@@ -229,6 +229,11 @@ export const checks: Record<string, Check> = {
       await probe(`pinned search + ${name}`, 'exa.search', { query: 'q', ...extra }, A);
       await probe(`per-call search + ${name}`, 'exa.search', { query: 'q', contents: { snapshotAsOf: A }, ...extra });
     }
+    for (const [field, value] of Object.entries(contentsConflicts)) {
+      const rec = recordingClient();
+      const problem = await rejectsWithBoundary(() => guardSnapshots(rec.client, A).search('q', { contents: { [field]: value } }));
+      if (problem || rec.calls.length > 0) problems.push(`client-level pinned search + contents.${field}: ${problem ?? 'reached the client'}`);
+    }
     for (const [name, extra] of searchConflicts.filter(([n]) => n !== 'stream')) {
       const rec = recordingClient();
       const problem = await rejectsWithBoundary(() => guardSnapshots(rec.client, A).search('q', { ...extra }));
@@ -261,6 +266,11 @@ export const checks: Record<string, Check> = {
       ['live-sourced contents', 'exa.getContents', { urls: ['https://example.com/a'] },
         { results: [result({})], statuses: [{ id: 'https://example.com/a', status: 'success', source: 'live' }] }, A],
       ['late snapshotAt on per-call search', 'exa.search', { query: 'q', contents: { snapshotAsOf: A } }, { results: [result({ snapshotAt: late })] }, undefined],
+      // Earlier per-call snapshot inside a pinned run: the cutoff is the per-call value, not asOf.
+      ['snapshotAt between an earlier per-call snapshot and asOf', 'exa.search',
+        { query: 'q', contents: { snapshotAsOf: iso(Date.parse(A) - 10 * DAY) } }, { results: [result({ snapshotAt: early })] }, A],
+      ['contents sourced from neither store nor live', 'exa.getContents', { urls: ['https://example.com/a'] },
+        { results: [result({})], statuses: [{ id: 'https://example.com/a', status: 'success', source: 'crawl' }] }, A],
     ];
     for (const [name, op, args, body, asOf] of leaks) {
       const rec = recordingClient(responder(body));
@@ -313,6 +323,21 @@ export const checks: Record<string, Check> = {
       if (!['verified', 'provider-guaranteed'].includes(t.verification)) problems.push(`${key}: temporal.verification ${JSON.stringify(t.verification)}`);
     }
     if (envelope.result?.search?.temporal?.discovery !== 'current-ranking') problems.push('search: temporal.discovery is not current-ranking');
+
+    // A per-call snapshot outside a pinned run is still a response under a snapshot.
+    const { dispatchOperation } = await operations(env);
+    const B = iso(Date.parse(A) - 10 * DAY);
+    for (const [op, args] of [
+      ['exa.search', { query: 'q', contents: { snapshotAsOf: B } }],
+      ['exa.getContents', { urls: ['https://example.com/a'], snapshotAsOf: B }],
+      ['exa.getContents', { ids: ['https://example.com/a'], snapshotAsOf: B }],
+    ] as const) {
+      const live = recordingClient(path => path === 'rawRequest'
+        ? { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+        : body);
+      const t = jsonOf(await dispatchOperation(op, args, live.client, 'strict'))?.temporal;
+      if (!t || !sameInstant(t.snapshotAsOf, B)) problems.push(`per-call ${op} ${Object.keys(args)[0]}: missing or wrong temporal block`);
+    }
     return problems.length === 0 ? pass('pinned envelope carries asOf; search and contents carry temporal blocks; search discovery marked current-ranking') : fail(problems.join('; '));
   },
 
