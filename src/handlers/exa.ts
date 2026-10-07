@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { OperationHandler } from './types.js';
 import { successResult, errorResult, requireParams } from './types.js';
+import { snapshotInstant } from '../temporal/instant.js';
 
 export const Schemas = {
   search: z.object({
@@ -18,6 +19,7 @@ export const Schemas = {
       text: z.union([z.boolean(), z.record(z.string(), z.unknown())]).optional(),
       highlights: z.union([z.boolean(), z.record(z.string(), z.unknown())]).optional(),
       summary: z.union([z.boolean(), z.record(z.string(), z.unknown())]).optional(),
+      snapshotAsOf: snapshotInstant.optional(),
     }).optional(),
     additionalQueries: z.array(z.string()).max(10).optional(),
     userLocation: z.string().optional(),
@@ -79,6 +81,7 @@ export const Schemas = {
     subpageTarget: z.array(z.string()).optional(),
     extras: z.record(z.string(), z.unknown()).optional(),
     context: z.record(z.string(), z.unknown()).optional(),
+    snapshotAsOf: snapshotInstant.optional(),
   }).refine(data => data.urls !== undefined || data.ids !== undefined, {
     message: "Either 'urls' or 'ids' is required",
     path: ['urls'],
@@ -98,7 +101,8 @@ const SEARCH_HINTS = `Common issues:
 - category must be: company, research paper, news, personal site, financial report, people
 - contents is an object like {text: true, summary: true}, NOT a boolean
 - Date filters use ISO 8601: "2024-01-01T00:00:00.000Z"
-- additionalQueries only works when type is "deep" (max 10)`;
+- additionalQueries only works when type is "deep" (max 10)
+- contents.snapshotAsOf pins page content to a past instant within 5 months; it cannot be combined with deep types, category or stream`;
 
 export const search: OperationHandler = async (args, exa, ctx) => {
   const guard = requireParams('exa.search', args, 'query');
@@ -215,6 +219,7 @@ export const getContents: OperationHandler = async (args, exa) => {
     if (args.subpageTarget) opts.subpageTarget = args.subpageTarget;
     if (args.extras) opts.extras = args.extras;
     if (args.context !== undefined) opts.context = args.context;
+    if (args.snapshotAsOf !== undefined) opts.snapshotAsOf = args.snapshotAsOf;
 
     // ID path: SDK's getContents only sends `urls`, never `ids`. Drop to
     // rawRequest with the spec's ContentsRequest shape when ids are supplied.

@@ -3,14 +3,17 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Exa } from 'exa-js';
 import { executeInSandbox } from './sandbox.js';
 import type { CompatMode } from './coercion.js';
-import type { OperationContext } from '../handlers/types.js';
+import type { OperationContext, ToolResult } from '../handlers/types.js';
+import { parseAsOf, snapshotInstant } from '../temporal/instant.js';
 
-const inputSchema = z.object({
+export const executeInputSchema = z.object({
   code: z.string().describe('JavaScript code to execute in the sandbox'),
   timeout: z.number().optional().default(30000)
     .describe('Execution timeout in milliseconds (max 120000)'),
   silent: z.boolean().optional().default(false)
     .describe('Suppress MCP notifications/progress emission from streaming operations. Default false. Set true if the calling client receives push delivery through another channel (e.g. the websets-channel bridge in Claude Code) and you don\'t want redundant progress notifications.'),
+  asOf: snapshotInstant.optional()
+    .describe('Pin this run to a past instant: an ISO 8601 date (2026-06-01, midnight UTC) or date-time with a timezone, within the last 5 months. exa.search and exa.getContents then return the newest version Exa stored at or before it; every other operation is refused. Page content is bounded; search ranking is not.'),
 });
 
 const DESCRIPTION = `Execute JavaScript code with access to all Exa Websets operations.
@@ -35,10 +38,99 @@ PARAMETER FORMAT RULES (when using callOperation):
 - criteria: MUST be [{description: "..."}] (array of objects, NOT strings)
 - entity: MUST be {type: "company"} (object, NOT string)
 - options: MUST be [{label: "..."}] (array of objects, NOT strings)
-- cron: MUST be 5-field format "minute hour day month weekday"`;
+- cron: MUST be 5-field format "minute hour day month weekday"
+
+PINNED RUNS (asOf):
+- Pass asOf to bound the whole run to a past instant. exa.search and exa.getContents
+  return the newest stored version of each page at or before it, and each response
+  carries a temporal block saying how the bound was checked. Every other operation
+  is refused with TEMPORAL_BOUNDARY.
+- Content is bounded, discovery is not: which pages search finds, and their order,
+  still come from Exa's current index.`;
 
 export interface ExecuteToolOptions {
   defaultCompatMode?: CompatMode;
+}
+
+export interface RunExecuteOptions {
+  compatMode?: CompatMode;
+  /** Progress and cancellation plumbing from the MCP request, if any. */
+  ctx?: OperationContext;
+}
+
+/**
+ * Runs one `execute` call. A pinned run (`asOf`) threads the normalized
+ * instant through every callOperation and stamps it at the top of the result.
+ */
+export async function runExecute(
+  input: unknown,
+  exa: Exa,
+  options: RunExecuteOptions = {},
+): Promise<ToolResult> {
+  const parsed = executeInputSchema.parse(input);
+  let asOf: string | undefined;
+  if (parsed.asOf !== undefined) {
+    const pinned = parseAsOf(parsed.asOf);
+    if (!pinned.ok) {
+      return { content: [{ type: 'text' as const, text: `Execution error: asOf ${pinned.reason}` }], isError: true };
+    }
+    asOf = pinned.asOf;
+  }
+  const ctx: OperationContext = { ...options.ctx, silent: parsed.silent, ...(asOf !== undefined ? { asOf } : {}) };
+
+  try {
+    const { result, logs, resourceLinks } = await executeInSandbox(parsed.code, exa, {
+      timeoutMs: Math.min(parsed.timeout, 120_000),
+      compatMode: options.compatMode ?? 'strict',
+      ctx,
+    });
+
+    const output: Record<string, unknown> = asOf !== undefined ? { asOf, result } : { result };
+    if (logs.length > 0) output.logs = logs;
+
+    // Forward any resource_link blocks the inner handlers attached
+    // (e.g. tasks.create returning a workflow:// link). Without this
+    // append the MCP client never sees them: the sandbox unwraps only
+    // content[0].text into the JS return value, and the execute tool
+    // would otherwise return only that text. Surfacing them here gives
+    // the model inline access to workflow docs / spec resources
+    // exactly when it dispatches the corresponding operation.
+    return {
+      content: [
+        { type: 'text' as const, text: JSON.stringify(output, null, 2) },
+        ...resourceLinks,
+      ],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    // Append pattern-matched hints for common agent mistakes
+    const hints: string[] = [];
+    if (/Expected object, received string/i.test(message) || /entity/i.test(message)) {
+      hints.push('Hint: entity must be an object like {type: "company"}, not a bare string.');
+    }
+    if (/criteria/i.test(message) && /string/i.test(message)) {
+      hints.push('Hint: criteria must be [{description: "..."}], not an array of strings.');
+    }
+    if (/options/i.test(message) && /string/i.test(message)) {
+      hints.push('Hint: options must be [{label: "..."}], not an array of strings.');
+    }
+    if (/401|403|Unauthorized|Forbidden/i.test(message)) {
+      hints.push('Hint: Check that EXA_API_KEY is set and valid.');
+    }
+    if (/404|[Nn]ot [Ff]ound/.test(message)) {
+      hints.push('Hint: Resource not found. It may have been deleted. Use the corresponding .list operation to find valid IDs.');
+    }
+    if (/429|rate limit/i.test(message)) {
+      hints.push('Hint: Rate limited. Wait before retrying or reduce request frequency.');
+    }
+
+    const hintSuffix = hints.length > 0 ? `\n\n${hints.join('\n')}` : '';
+    return {
+      content: [{ type: 'text' as const, text: `Execution error: ${message}${hintSuffix}` }],
+      isError: true,
+    };
+  }
 }
 
 export function registerExecuteTool(
@@ -52,11 +144,9 @@ export function registerExecuteTool(
     'execute',
     {
       description: DESCRIPTION,
-      inputSchema: inputSchema as any,
+      inputSchema: executeInputSchema as any,
     },
     async (input: any, extra: any) => {
-      const parsed = inputSchema.parse(input);
-
       // Build the operation context that's threaded through callOperation
       // into each handler. The MCP SDK exposes:
       //   extra._meta?.progressToken   — caller's progress correlator
@@ -83,65 +173,7 @@ export function registerExecuteTool(
           }
         : undefined;
 
-      const ctx: OperationContext = {
-        sendProgress,
-        signal: extra?.signal,
-        silent: parsed.silent,
-      };
-
-      try {
-        const { result, logs, resourceLinks } = await executeInSandbox(parsed.code, exa, {
-          timeoutMs: Math.min(parsed.timeout, 120_000),
-          compatMode,
-          ctx,
-        });
-
-        const output: Record<string, unknown> = { result };
-        if (logs.length > 0) output.logs = logs;
-
-        // Forward any resource_link blocks the inner handlers attached
-        // (e.g. tasks.create returning a workflow:// link). Without this
-        // append the MCP client never sees them: the sandbox unwraps only
-        // content[0].text into the JS return value, and the execute tool
-        // would otherwise return only that text. Surfacing them here gives
-        // the model inline access to workflow docs / spec resources
-        // exactly when it dispatches the corresponding operation.
-        return {
-          content: [
-            { type: 'text' as const, text: JSON.stringify(output, null, 2) },
-            ...resourceLinks,
-          ],
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-
-        // Append pattern-matched hints for common agent mistakes
-        const hints: string[] = [];
-        if (/Expected object, received string/i.test(message) || /entity/i.test(message)) {
-          hints.push('Hint: entity must be an object like {type: "company"}, not a bare string.');
-        }
-        if (/criteria/i.test(message) && /string/i.test(message)) {
-          hints.push('Hint: criteria must be [{description: "..."}], not an array of strings.');
-        }
-        if (/options/i.test(message) && /string/i.test(message)) {
-          hints.push('Hint: options must be [{label: "..."}], not an array of strings.');
-        }
-        if (/401|403|Unauthorized|Forbidden/i.test(message)) {
-          hints.push('Hint: Check that EXA_API_KEY is set and valid.');
-        }
-        if (/404|[Nn]ot [Ff]ound/.test(message)) {
-          hints.push('Hint: Resource not found. It may have been deleted. Use the corresponding .list operation to find valid IDs.');
-        }
-        if (/429|rate limit/i.test(message)) {
-          hints.push('Hint: Rate limited. Wait before retrying or reduce request frequency.');
-        }
-
-        const hintSuffix = hints.length > 0 ? `\n\n${hints.join('\n')}` : '';
-        return {
-          content: [{ type: 'text' as const, text: `Execution error: ${message}${hintSuffix}` }],
-          isError: true,
-        };
-      }
+      return runExecute(input, exa, { compatMode, ctx: { sendProgress, signal: extra?.signal } });
     },
   );
 }

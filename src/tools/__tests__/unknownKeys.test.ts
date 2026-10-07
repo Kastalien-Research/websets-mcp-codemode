@@ -92,17 +92,17 @@ describe('dispatchOperation with unknown keys', () => {
     expect(text).toContain('Valid keys: query, type, numResults');
   });
 
-  it('rejects snapshotAsOf inside exa.search contents rather than dropping it', async () => {
-    const result = await dispatchOperation('exa.search', { query: 'q', contents: { snapshotAsOf: '2026-06-01' } }, exa);
+  it('rejects an unknown key inside exa.search contents rather than dropping it', async () => {
+    const result = await dispatchOperation('exa.search', { query: 'q', contents: { livecrawl: 'always' } }, exa);
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatch(/- contents: Unrecognized key 'snapshotAsOf'.*Valid keys: text, highlights, summary\./);
+    expect(textOf(result)).toMatch(/- contents: Unrecognized key 'livecrawl'.*Valid keys: text, highlights, summary, snapshotAsOf\./);
   });
 
-  it('rejects snapshotAsOf on exa.getContents for both the urls and the ids path', async () => {
+  it('rejects an unknown key on exa.getContents for both the urls and the ids path', async () => {
     for (const target of [{ urls: ['https://example.com'] }, { ids: ['https://example.com'] }]) {
-      const result = await dispatchOperation('exa.getContents', { ...target, snapshotAsOf: '2026-06-01' }, exa);
-      expect(result.isError).toBe(true);
-      expect(textOf(result)).toContain("Unrecognized key 'snapshotAsOf'");
+      const result = await dispatchOperation('exa.getContents', { ...target, snapshotAt: '2026-06-01' }, exa);
+      expect(result.isError, JSON.stringify(target)).toBe(true);
+      expect(textOf(result)).toContain("Unrecognized key 'snapshotAt' (did you mean 'snapshotAsOf'?)");
     }
   });
 });

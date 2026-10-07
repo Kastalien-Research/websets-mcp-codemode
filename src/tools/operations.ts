@@ -23,6 +23,7 @@ import * as store from '../store/operations.js';
 import * as notebook from '../handlers/notebook.js';
 import { applyCompatCoercions, type AppliedCoercion, type CompatMode } from './coercion.js';
 import { keysAt, nearestKey, rejectUnknownKeys } from './unknownKeys.js';
+import { PINNABLE_OPERATIONS, TemporalBoundaryError, guardSnapshots, refusalMessage } from '../temporal/boundary.js';
 
 // Single barrel import for all workflow side-effect registrations
 import '../workflows/index.js';
@@ -369,6 +370,13 @@ export async function dispatchOperation(
     };
   }
 
+  // A pinned run refuses anything that cannot be bounded to its instant,
+  // before validation so the refusal is the first thing the caller sees.
+  if (ctx?.asOf !== undefined && !PINNABLE_OPERATIONS.has(operation)) {
+    const error = new TemporalBoundaryError(refusalMessage(operation, ctx.asOf));
+    return { content: [{ type: 'text' as const, text: `Error in ${operation}: ${error.message}` }], isError: true };
+  }
+
   const coercion = applyCompatCoercions(
     operation,
     (args || {}) as Record<string, unknown>,
@@ -408,6 +416,8 @@ export async function dispatchOperation(
     );
   }
 
-  const result = await meta.handler(validatedArgs, exa, ctx);
+  // Handlers (and the workflows they start) only ever see the guarded client,
+  // so snapshot rules hold however deep the call that reaches Exa.
+  const result = await meta.handler(validatedArgs, guardSnapshots(exa, ctx?.asOf), ctx);
   return withCoercionMetadata(result, coercion.coercions, coercion.warnings);
 }

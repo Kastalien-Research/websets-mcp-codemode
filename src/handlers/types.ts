@@ -35,6 +35,12 @@ export interface OperationContext {
   sendProgress?: (progress: number, message?: string) => Promise<void>;
   signal?: AbortSignal;
   silent?: boolean;
+  /**
+   * Instant this run is pinned to (normalized ISO 8601, validated by the
+   * caller). Only PINNABLE_OPERATIONS may run, and their Exa requests are
+   * bounded by it (see src/temporal/boundary.ts).
+   */
+  asOf?: string;
 }
 
 export type OperationHandler = (

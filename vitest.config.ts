@@ -10,5 +10,8 @@ export default defineConfig({
     hookTimeout: 30_000,
     // Run test files sequentially to avoid Exa API rate limits during integration tests
     fileParallelism: false,
+    // Worker threads intermittently SIGSEGV on teardown with the native
+    // better-sqlite3 addon (2/8 runs vs 0/20 with forks).
+    pool: 'forks',
   },
 });
