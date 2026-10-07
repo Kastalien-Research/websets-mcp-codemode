@@ -1,0 +1,41 @@
+{
+  "degraded": false,
+  "errors": [],
+  "websets": {
+    "count": 0,
+    "hasMore": false,
+    "by_status": {},
+    "recent": []
+  },
+  "tasks": {
+    "running": 0,
+    "active": [],
+    "recent_errors": []
+  },
+  "monitors": {
+    "active": 0
+  },
+  "snapshot": {
+    "used": 37,
+    "budget": 100,
+    "remaining": 63,
+    "recorded": 13,
+    "window": {
+      "from": "2026-05-05T00:00:00Z",
+      "to": "2026-10-05T00:00:00Z"
+    },
+    "note": "Exa Snapshot requests this server has sent (replays of recorded requests are free). Pin a run with execute({ asOf }) to an instant between window.from and window.to."
+  },
+  "capabilities": {
+    "tools": [
+      "search",
+      "execute",
+      "status"
+    ],
+    "operationCount": 104,
+    "compatMode": "strict",
+    "hint": "Use search tool to discover specific operations, execute tool to run code",
+    "notifications": "If the websets-channel bridge is connected, webhook events arrive in your context as <channel source=\"websets-channel\"> blocks. Delivery is turn-gated: events queue and arrive at your next turn boundary and NEVER interrupt an in-progress turn; bursts are delivered together (handle as a group). A block that does not appear immediately is queued, not lost — finish the turn and look again. Design handling to act from a single notification where possible."
+  },
+  "timestamp": "2026-10-07T20:58:06.832Z"
+}
