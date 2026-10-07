@@ -6,7 +6,8 @@ import { recordingClient } from '../harness/recording-client.js';
 import { fail, pass, type Check, type CheckEnv } from '../kernel.js';
 
 const PROBE_KEY = '__contract_probe_unknown_key__';
-const SNAPSHOT_AS_OF = '2026-06-01T00:00:00Z';
+const DAY = 86_400_000;
+const sameInstant = (a: unknown, b: string) => typeof a === 'string' && Date.parse(a) === Date.parse(b);
 
 async function operationsModule(env: CheckEnv) {
   return import(pathToFileURL(join(env.root, 'src/tools/operations.ts')).href);
@@ -125,6 +126,8 @@ export const checks: Record<string, Check> = {
 
   async 'S1.3'(env) {
     const { dispatchOperation } = await operationsModule(env);
+    // Relative to the verifier clock: a fixed date would age out of Snapshot's rolling window.
+    const SNAPSHOT_AS_OF = new Date(env.now.getTime() - 30 * DAY).toISOString();
     const cases: Array<{
       name: string;
       op: string;
@@ -136,22 +139,22 @@ export const checks: Record<string, Check> = {
         op: 'exa.search',
         args: { query: 'contract probe', contents: { snapshotAsOf: SNAPSHOT_AS_OF, highlights: true } },
         forwarded: calls => calls.some(c =>
-          c.path === 'search' && (c.args[1] as any)?.contents?.snapshotAsOf === SNAPSHOT_AS_OF),
+          c.path === 'search' && sameInstant((c.args[1] as any)?.contents?.snapshotAsOf, SNAPSHOT_AS_OF)),
       },
       {
         name: 'exa.getContents urls',
         op: 'exa.getContents',
         args: { urls: ['https://example.com/'], snapshotAsOf: SNAPSHOT_AS_OF, text: true },
         forwarded: calls => calls.some(c =>
-          (c.path === 'getContents' && (c.args[1] as any)?.snapshotAsOf === SNAPSHOT_AS_OF) ||
-          (c.path === 'rawRequest' && (c.args[2] as any)?.snapshotAsOf === SNAPSHOT_AS_OF)),
+          (c.path === 'getContents' && sameInstant((c.args[1] as any)?.snapshotAsOf, SNAPSHOT_AS_OF)) ||
+          (c.path === 'rawRequest' && sameInstant((c.args[2] as any)?.snapshotAsOf, SNAPSHOT_AS_OF))),
       },
       {
         name: 'exa.getContents ids',
         op: 'exa.getContents',
         args: { ids: ['https://example.com/'], snapshotAsOf: SNAPSHOT_AS_OF, text: true },
         forwarded: calls => calls.some(c =>
-          c.path === 'rawRequest' && (c.args[2] as any)?.snapshotAsOf === SNAPSHOT_AS_OF),
+          c.path === 'rawRequest' && sameInstant((c.args[2] as any)?.snapshotAsOf, SNAPSHOT_AS_OF)),
       },
     ];
 

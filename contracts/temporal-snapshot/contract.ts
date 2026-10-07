@@ -159,7 +159,7 @@ export const PROCESS_INVARIANTS: Invariant[] = [
   {
     id: 'P7',
     scope: 'process',
-    statement: `Live Snapshot requests made by contract tooling MUST total at most ${SNAPSHOT_SPEND_LIMIT} over the whole process (from S3, the server's own spend ledger counts too).`,
+    statement: `Live Snapshot requests made by contract tooling MUST total at most ${SNAPSHOT_SPEND_LIMIT} over the whole process.`,
     checkedBy: 'Sums `spend` entries in the ledger (plus the S3 spend table once it exists).',
   },
 ];
@@ -278,50 +278,51 @@ export const STATES: StateSpec[] = [
   },
   {
     id: 'S3',
-    name: 'Page history',
-    summary: 'Every version the workspace has seen is kept locally, re-reads are free when provably correct, and the quota is visible.',
+    name: 'Recorded snapshots',
+    summary:
+      'Every snapshot request this server makes is recorded locally. An identical request is replayed from the record at no cost, a record never stands in for a different instant, and the quota is visible. (Exa returns no crawl time, so no other reuse can be proven correct.)',
     invariants: [
       {
         id: 'S3.1',
         scope: 'state',
         statement:
-          'Every snapshot response MUST be persisted as page versions keyed by (url, snapshotAt) with a content hash, and for every stored row sha256(content) MUST equal the stored hash.',
-        checkedBy: 'Runs pinned reads against a recording client into a temp store, then rehashes every row.',
+          'Every successful upstream snapshot request MUST be recorded with its canonical request, the raw response and the response\'s sha256, and for every stored record sha256(response) MUST equal the stored hash.',
+        checkedBy: 'Runs snapshot requests through dispatch against an in-memory store and a recording client, then rehashes every stored row.',
       },
       {
         id: 'S3.2',
         scope: 'state',
         statement:
-          'With an immutable upstream history, a pinned read MUST return exactly the newest version at or before `asOf`, and MUST call upstream if and only if `asOf` falls outside every recorded interval [snapshotAt, requestedAsOf] for that URL.',
-        checkedBy: 'Property check over seeded random version timelines and request sequences.',
+          'A snapshot request MUST be answered from the record, with zero upstream calls, if and only if an identical request (same call, same arguments, same snapshot instant) was recorded; a replay MUST return the recorded response and state when it was fetched.',
+        checkedBy: 'Property check over seeded random sequences of pinned and per-call search and contents requests, against a model of the recorded set.',
       },
       {
         id: 'S3.3',
         scope: 'state',
         statement:
-          'A served version MUST never have `snapshotAt` later than the requested instant, including after upstream history is backfilled.',
-        checkedBy: 'Property check with backfill events injected between requests.',
+          'A record MUST never answer a request for a different instant, and a replayed response MUST pass the same S2.6 leak checks and carry the same temporal block as a fresh one.',
+        checkedBy: 'Requests neighboring instants after recording; tampers a record (with a consistent hash) to hold a late snapshotAt and expects TEMPORAL_LEAK on replay.',
       },
       {
         id: 'S3.4',
         scope: 'state',
         statement:
-          'Each upstream request carrying `snapshotAsOf` MUST increment the local spend ledger by exactly 1, and cache hits MUST NOT increment it.',
-        checkedBy: 'Compares recorded upstream calls with the ledger delta over the S3.2 sequences.',
+          'Each upstream request carrying `snapshotAsOf`, successful or not, MUST add exactly one entry to the local spend ledger, and replays MUST NOT add any.',
+        checkedBy: 'Compares upstream calls with the spend ledger delta over the S3.2 sequences and a failing request.',
       },
       {
         id: 'S3.5',
         scope: 'state',
         statement:
-          'When the local spend count reaches `SNAPSHOT_BUDGET` (default 100), uncached pinned requests MUST fail with `TEMPORAL_BUDGET` and zero upstream calls, while cached reads still succeed.',
-        checkedBy: 'Seeds the ledger at the budget and probes cached and uncached reads.',
+          'When the local spend count reaches `SNAPSHOT_BUDGET` (default 100), requests that would go upstream MUST fail with `TEMPORAL_BUDGET` and zero upstream calls, while replays still succeed.',
+        checkedBy: 'Spends a small budget, then probes a new request and a replay.',
       },
       {
         id: 'S3.6',
         scope: 'state',
         statement:
-          'The `status` tool MUST report snapshot `used`, `budget` and the valid window `{from, to}`, with `used` equal to the ledger count.',
-        checkedBy: 'Calls the status builder in-process against a seeded store.',
+          'The `status` tool MUST report snapshot `used`, `budget`, `remaining`, `recorded` and the valid window `{from, to}`, with `used` equal to the spend ledger count.',
+        checkedBy: 'Calls the status builder in-process against a seeded in-memory store.',
       },
     ],
   },

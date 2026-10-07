@@ -37,7 +37,7 @@ Allowed removals: `research.create`, `research.get`, `research.list`, `research.
 | P4 | Frame condition: every file changed between the transition base and HEAD MUST match the transition scope or the always-allowed set. | `git diff --name-only base..HEAD`, matched against globs. |
 | P5 | The ledger MUST be append-only: every committed revision of the ledger extends the previous one. | Walks `git log -- ledger.jsonl` up to HEAD and prefix-compares consecutive revisions. |
 | P6 | Advance verdicts MUST come from a fresh worktree of a committed HEAD, with a clean working tree and no Exa or Anthropic credentials in the verifier environment. | The orchestrator refuses to advance on a dirty tree, creates the worktree itself, and launches the verifier with an allowlisted environment. |
-| P7 | Live Snapshot requests made by contract tooling MUST total at most 10 over the whole process (from S3, the server's own spend ledger counts too). | Sums `spend` entries in the ledger (plus the S3 spend table once it exists). |
+| P7 | Live Snapshot requests made by contract tooling MUST total at most 10 over the whole process. | Sums `spend` entries in the ledger (plus the S3 spend table once it exists). |
 
 Live Snapshot spend limit for contract tooling: 10 requests.
 
@@ -73,18 +73,18 @@ A run can be pinned to an instant. Pinning is enforced at the client boundary, s
 | S2.8 | Without `asOf` and without a per-call `snapshotAsOf`, outgoing requests MUST NOT contain `snapshotAsOf`. | Recording client, live mode. |
 | S2.9 | Recorded live responses of one pinned search and one pinned contents call (at most 2 sanctioned requests) MUST exist, and replaying them through the pinned path MUST succeed without a false `TEMPORAL_LEAK`, carrying the verification label their fields justify. | Reads fixtures/t2-live-probe-{search,contents}.json, matches each requestId to a `spend` ledger entry, and replays both through a recording client. |
 
-### S3: Page history
+### S3: Recorded snapshots
 
-Every version the workspace has seen is kept locally, re-reads are free when provably correct, and the quota is visible.
+Every snapshot request this server makes is recorded locally. An identical request is replayed from the record at no cost, a record never stands in for a different instant, and the quota is visible. (Exa returns no crawl time, so no other reuse can be proven correct.)
 
 | ID | Statement | Checked by |
 |---|---|---|
-| S3.1 | Every snapshot response MUST be persisted as page versions keyed by (url, snapshotAt) with a content hash, and for every stored row sha256(content) MUST equal the stored hash. | Runs pinned reads against a recording client into a temp store, then rehashes every row. |
-| S3.2 | With an immutable upstream history, a pinned read MUST return exactly the newest version at or before `asOf`, and MUST call upstream if and only if `asOf` falls outside every recorded interval [snapshotAt, requestedAsOf] for that URL. | Property check over seeded random version timelines and request sequences. |
-| S3.3 | A served version MUST never have `snapshotAt` later than the requested instant, including after upstream history is backfilled. | Property check with backfill events injected between requests. |
-| S3.4 | Each upstream request carrying `snapshotAsOf` MUST increment the local spend ledger by exactly 1, and cache hits MUST NOT increment it. | Compares recorded upstream calls with the ledger delta over the S3.2 sequences. |
-| S3.5 | When the local spend count reaches `SNAPSHOT_BUDGET` (default 100), uncached pinned requests MUST fail with `TEMPORAL_BUDGET` and zero upstream calls, while cached reads still succeed. | Seeds the ledger at the budget and probes cached and uncached reads. |
-| S3.6 | The `status` tool MUST report snapshot `used`, `budget` and the valid window `{from, to}`, with `used` equal to the ledger count. | Calls the status builder in-process against a seeded store. |
+| S3.1 | Every successful upstream snapshot request MUST be recorded with its canonical request, the raw response and the response's sha256, and for every stored record sha256(response) MUST equal the stored hash. | Runs snapshot requests through dispatch against an in-memory store and a recording client, then rehashes every stored row. |
+| S3.2 | A snapshot request MUST be answered from the record, with zero upstream calls, if and only if an identical request (same call, same arguments, same snapshot instant) was recorded; a replay MUST return the recorded response and state when it was fetched. | Property check over seeded random sequences of pinned and per-call search and contents requests, against a model of the recorded set. |
+| S3.3 | A record MUST never answer a request for a different instant, and a replayed response MUST pass the same S2.6 leak checks and carry the same temporal block as a fresh one. | Requests neighboring instants after recording; tampers a record (with a consistent hash) to hold a late snapshotAt and expects TEMPORAL_LEAK on replay. |
+| S3.4 | Each upstream request carrying `snapshotAsOf`, successful or not, MUST add exactly one entry to the local spend ledger, and replays MUST NOT add any. | Compares upstream calls with the spend ledger delta over the S3.2 sequences and a failing request. |
+| S3.5 | When the local spend count reaches `SNAPSHOT_BUDGET` (default 100), requests that would go upstream MUST fail with `TEMPORAL_BUDGET` and zero upstream calls, while replays still succeed. | Spends a small budget, then probes a new request and a replay. |
+| S3.6 | The `status` tool MUST report snapshot `used`, `budget`, `remaining`, `recorded` and the valid window `{from, to}`, with `used` equal to the spend ledger count. | Calls the status builder in-process against a seeded in-memory store. |
 
 ### S4: Backtest and compare
 
