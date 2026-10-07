@@ -54,6 +54,9 @@ export const STATE_CHECK_FILES: Record<string, string> = {
   S5: 'contracts/temporal-snapshot/invariants/s5.ts',
 };
 
+/** The only source files allowed to construct an Exa client (S2.3). */
+export const CLIENT_BOOTSTRAP_FILES = ['src/server.ts'];
+
 /**
  * Files every transition may touch in addition to its own scope (P4). The
  * contract directory is safe to allow: its definition files are hash-pinned
@@ -226,8 +229,8 @@ export const STATES: StateSpec[] = [
         id: 'S2.3',
         scope: 'state',
         statement:
-          'In a pinned run, handlers and workflows MUST receive only a pinned client: every client method outside the pinnable set MUST throw `TEMPORAL_BOUNDARY`, and `new Exa(` MUST appear only in declared bootstrap files.',
-        checkedBy: 'Calls each known SDK method path on the pinned client; greps `src/` for client construction.',
+          'In a pinned run, handlers and workflows MUST receive only a pinned client: every client method outside the pinnable set MUST throw `TEMPORAL_BOUNDARY`, and `new Exa(` MUST appear only in CLIENT_BOOTSTRAP_FILES.',
+        checkedBy: 'Calls each known SDK method path on the pinned client over a recording client; greps non-test files in `src/` for client construction.',
       },
       {
         id: 'S2.4',
@@ -240,22 +243,22 @@ export const STATES: StateSpec[] = [
         id: 'S2.5',
         scope: 'state',
         statement:
-          'Any request carrying a snapshot MUST be rejected with zero calls when it also sets `livecrawl`, `livecrawlTimeout`, `maxAgeHours` or `subpages`, or, on search, a deep `type` or a `category`.',
+          'Any request carrying a snapshot MUST be rejected with zero calls when it also sets `livecrawl`, `livecrawlTimeout`, `maxAgeHours` or `subpages`, or, on search, a deep `type`, a `category` or streaming.',
         checkedBy: 'One probe per forbidden field, pinned and per-call.',
       },
       {
         id: 'S2.6',
         scope: 'state',
         statement:
-          'Every result returned under a snapshot MUST carry `snapshotAt` no later than the effective `snapshotAsOf`; a later or missing `snapshotAt` MUST turn the call into a `TEMPORAL_LEAK` error that returns none of the offending content.',
-        checkedBy: 'Recording client returns crafted late and missing `snapshotAt` values; output must be the tagged error without the content.',
+          'Responses under a snapshot MUST be checked with every field the API provides: a `snapshotAt` later than the effective `snapshotAsOf` (or unparseable), or a contents status reporting a `source` other than `cached`, MUST turn the call into a `TEMPORAL_LEAK` error that returns none of the offending content. Results without `snapshotAt` MUST be labeled as bounded by the provider\'s guarantee, not as verified.',
+        checkedBy: 'Recording client returns crafted late, unparseable, live-sourced and missing `snapshotAt` results; leaks must be tagged errors without the content, and unverifiable results must carry the provider-guaranteed label.',
       },
       {
         id: 'S2.7',
         scope: 'state',
         statement:
-          'A pinned `execute` response MUST carry `asOf` at its top level, and pinned search responses MUST state that discovery used current ranking.',
-        checkedBy: 'Runs `execute` in-process under `asOf` with a recording client and inspects the envelope.',
+          'A pinned `execute` response MUST carry `asOf` at its top level, and every search or contents response under a snapshot MUST carry a `temporal` block stating the bound and how it was verified; search responses MUST also state that discovery used current ranking.',
+        checkedBy: 'Runs `execute` in-process under `asOf` with a recording client and inspects the envelope and the temporal blocks.',
       },
       {
         id: 'S2.8',
@@ -268,8 +271,8 @@ export const STATES: StateSpec[] = [
         id: 'S2.9',
         scope: 'state',
         statement:
-          'A recorded live fixture of one pinned search and one pinned contents call (at most 2 sanctioned requests) MUST exist and MUST show the response fields S2.6 depends on.',
-        checkedBy: 'Reads fixtures/t2-live-probe.json and its matching `spend` ledger entries.',
+          'Recorded live responses of one pinned search and one pinned contents call (at most 2 sanctioned requests) MUST exist, and replaying them through the pinned path MUST succeed without a false `TEMPORAL_LEAK`, carrying the verification label their fields justify.',
+        checkedBy: 'Reads fixtures/t2-live-probe-{search,contents}.json, matches each requestId to a `spend` ledger entry, and replays both through a recording client.',
       },
     ],
   },
@@ -442,6 +445,8 @@ export const TRANSITIONS: TransitionSpec[] = [
       'src/workflows/**',
       'src/server.ts',
       'src/index.ts',
+      'src/lib/exa.ts',
+      'vitest.config.ts',
     ],
   },
   {
@@ -579,11 +584,7 @@ const REVIEW_ANCHORS = (best: string, worst: string) => ({
 
 /** Fixture constants the model-as-user expectations depend on (generators must use them). */
 export const FIXTURE_CONSTANTS = {
-  t2: {
-    asOf: '2026-08-01T00:00:00.000Z',
-    firstResultUrl: 'https://example.com/pricing',
-    firstResultSnapshotAt: '2026-07-14T03:12:00.000Z',
-  },
+  t2: { asOf: '2026-08-01T00:00:00.000Z' },
   t3: { used: 37, budget: 100, windowFrom: '2026-05-05' },
   t4: { url: 'https://example.com/pricing', before: '$20', after: '$25' },
 };
@@ -681,10 +682,10 @@ export const CRITERIA: Criterion[] = [
         match: 'yes-no',
       },
       {
-        id: 'crawl',
-        ask: `When was the stored version of ${FIXTURE_CONSTANTS.t2.firstResultUrl} in this response crawled? Answer with the ISO 8601 instant only.`,
-        expect: FIXTURE_CONSTANTS.t2.firstResultSnapshotAt,
-        match: 'iso-instant',
+        id: 'verification',
+        ask: 'Did the tool itself verify when each page version was crawled, or does the time bound rest on the data provider\'s guarantee? Answer with one word: verified or provider.',
+        expect: 'provider',
+        match: 'contains',
       },
     ],
   },

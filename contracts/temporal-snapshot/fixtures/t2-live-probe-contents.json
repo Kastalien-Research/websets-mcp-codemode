@@ -1,0 +1,21 @@
+{
+  "requestId": "f9ab15487530d3f7ada800428dd0c6aa",
+  "results": [
+    {
+      "id": "https://docs.python.org/3/whatsnew/changelog.html",
+      "title": "Changelog — Python 3.14.6 documentation",
+      "url": "https://docs.python.org/3/whatsnew/changelog.html",
+      "author": null,
+      "text": "Changelog — Python 3.14.6 documentation\n\n## Python next¶\n\nRelease date: XXXX-XX-XX\n\n### Tests¶\n\n- gh-148853: Fix tests failing on FreeBSD in test.support’s in_systemd_nspawn_sync_suppressed() due to unreadable /run directory.\n\n### Library¶\n\n- gh-151695: Fix a use-after-free in the `curses` module. The encoding of the initial screen, used by `curses.unctrl()` and `curses.ungetch()` to encode non-ASCII characters, is now kept as a private copy instead of a borrowed pointer to a window object that may be deallocated.\n- gh-151403: Fixed a crash in `subprocess.Popen` (and `_posixsubprocess.fork_exec`) when an `argv` item’s `__fspath__()` concurrently mutates the `args` sequence being converted.\n- gh-151390: Colorize `match` in the REPL when followed by a unary `+` or `-` operator. Patch by Bartosz Sławecki.\n- gh-151126: Fix crash on unset `MemoryError` on allocation failure in `ctypes.get_errno()`.\n- gh-151337: Avoid possible memory leak in `tkinter.c` on Windows.\n- gh-151126: Fix a crash when `MemoryError` in `os._path_splitroot()` was not set properly.\n- gh-151126: Fix a crash, when there’s no memory left on a device, which happened in `_interpchannels` module.\n\nNow it raises proper `MemoryError` errors.\n- gh-151295: Fixed a crash (use-after-free) in `bytes.join()` and `bytearray.join()` that could occur if an item’s `__buffer__()` concurrently mutates the sequence being joined. The mutation is now reported as a `RuntimeError` instead.\n- gh-109940: Fix Windows `venv` activation in `cmd.exe` to respect `VIRTUAL_ENV_DISABLE_PROMPT`.\n- gh-143988: Fixed crashes in `socket.socket.sendmsg()` and `socket.socket.recvmsg_into()` that could occur if buffer sequences are concurrently mutated.\n- gh-130796: Undeprecate the `locale.getdefaultlocale()` function. Patch by Victor Stinner.\n- gh-120665: Fixed an issue where `unittest` loaders would load and instantiate `unittest.TestCase`-derived subclasses that are also abstract base classes, which can’t be instantiated.\n- gh-101267: Wh",
+      "image": "https://docs.python.org/3.14/_images/social_previews/summary_whatsnew_changelog_1a4b6eb3.png"
+    }
+  ],
+  "statuses": [
+    {
+      "id": "https://docs.python.org/3/whatsnew/changelog.html",
+      "status": "success",
+      "source": "cached"
+    }
+  ],
+  "searchTime": 105.64897199999541
+}
