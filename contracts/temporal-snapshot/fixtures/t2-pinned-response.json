@@ -1,0 +1,36 @@
+{
+  "asOf": "2026-08-01T00:00:00Z",
+  "result": {
+    "temporal": {
+      "snapshotAsOf": "2026-08-01T00:00:00Z",
+      "bound": "Page content comes from the newest version Exa stored at or before 2026-08-01T00:00:00Z.",
+      "verification": "provider-guaranteed",
+      "verificationNote": "2 of 2 results did not report a crawl time (snapshotAt), so the bound rests on Exa's guarantee rather than a check by this server.",
+      "discovery": "current-ranking",
+      "discoveryNote": "Which pages were returned, and their order, came from Exa's current index and ranking, which can reflect information from after snapshotAsOf. Treat these results as evidence bounded by snapshotAsOf, not as what a search would have returned then."
+    },
+    "requestId": "3b4e8588c9ff47839663000bc2efba76",
+    "resolvedSearchType": "",
+    "results": [
+      {
+        "id": "https://docs.python.org/3/whatsnew/changelog.html",
+        "title": "Changelog — Python 3.14.6 documentation",
+        "url": "https://docs.python.org/3/whatsnew/changelog.html",
+        "highlights": [
+          "Changelog — Python 3.14.6 documentation\n...\n## Python 3.14.6 final¶\n\nRelease date: 2026-06-10\n...\n## Python 3.14.5 final¶\n...\n## Python 3.14.5 release candidate 1¶"
+        ],
+        "image": "https://docs.python.org/3.14/_images/social_previews/summary_whatsnew_changelog_1a4b6eb3.png"
+      },
+      {
+        "id": "https://www.python.org/downloads/release/python-3146/",
+        "title": "Python Release Python 3.14.6 | Python.org",
+        "url": "https://www.python.org/downloads/release/python-3146/",
+        "highlights": [
+          "Python Release Python 3.14.6 | Python.org\n\n# Python 3.14.6\n\nRelease date: June 10, 2026\n\n# This is a the sixth maintenance release of Python 3.14\n\nPython 3.14.6 is the sixth maintenance release of 3.14, containing around 179 bugfixes, build improvements and documentation changes since 3.14.5.\n...\nFor more details on the changes to Python 3.14, see What’s new in Python 3.14.\n\n## Build changes"
+        ],
+        "image": "https://www.python.org/static/opengraph-icon-200x200.png"
+      }
+    ],
+    "searchTime": 1533.8
+  }
+}
