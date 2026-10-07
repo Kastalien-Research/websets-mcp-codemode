@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Exa } from 'exa-js';
 import { guardSnapshots, PINNABLE_OPERATIONS } from '../boundary.js';
 import { dispatchOperation } from '../../tools/operations.js';
+import { closeDb, getDb } from '../../store/db.js';
+import { storeSnapshotRecords } from '../records.js';
 
 const AS_OF = '2026-08-01T00:00:00Z';
 const LATER = '2026-08-02T00:00:00Z';
@@ -129,5 +131,67 @@ describe('dispatchOperation in a pinned run', () => {
       text: `Error in websets.list: TEMPORAL_BOUNDARY: websets.list cannot run in a run pinned to ${AS_OF}: it reaches live data that Exa Snapshot cannot bound to a past instant. Pinnable operations: ${[...PINNABLE_OPERATIONS].join(', ')}. To use websets.list, call it from an execute run without asOf.`,
     });
     expect(exa.websets.list).not.toHaveBeenCalled();
+  });
+});
+
+describe('guardSnapshots with records', () => {
+  beforeEach(() => {
+    closeDb();
+    getDb(':memory:');
+  });
+  afterEach(() => closeDb());
+
+  it('replays an identical request from the record without calling Exa or spending', async () => {
+    const { exa, client } = fakeExa({ results: [{ url: 'a', title: 'first fetch' }] });
+    const records = storeSnapshotRecords(10);
+    const pinned = guardSnapshots(client, AS_OF, records);
+    const fresh = await pinned.search('q') as any;
+    const replay = await pinned.search('q') as any;
+    expect(exa.search).toHaveBeenCalledOnce();
+    expect(records.spent()).toBe(1);
+    expect(fresh.temporal.source).toBe('upstream');
+    expect(replay.temporal).toMatchObject({ source: 'record', snapshotAsOf: AS_OF, verification: 'provider-guaranteed' });
+    expect(replay.results).toEqual(fresh.results);
+  });
+
+  it('treats the same instant spelled differently as the same request, and another instant as new', async () => {
+    const { exa, client } = fakeExa();
+    const records = storeSnapshotRecords(10);
+    const guarded = guardSnapshots(client, undefined, records);
+    await guarded.getContents(['a'], { snapshotAsOf: '2026-08-01' } as any);
+    await guarded.getContents(['a'], { snapshotAsOf: '2026-08-01T02:00:00+02:00' } as any);
+    expect(exa.getContents).toHaveBeenCalledOnce();
+    await guarded.getContents(['a'], { snapshotAsOf: '2026-08-01T00:00:01Z' } as any);
+    expect(exa.getContents).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses new requests once the budget is spent, but keeps replaying', async () => {
+    const { exa, client } = fakeExa();
+    const pinned = guardSnapshots(client, AS_OF, storeSnapshotRecords(1));
+    await pinned.search('first');
+    await expect(pinned.search('second')).rejects.toThrow('TEMPORAL_BUDGET: the local Snapshot budget is spent (1 of 1 requests)');
+    await expect(pinned.search('first')).resolves.toMatchObject({ temporal: { source: 'record' } });
+    expect(exa.search).toHaveBeenCalledOnce();
+  });
+
+  it('charges a failed upstream request without recording it', async () => {
+    const { exa, client } = fakeExa();
+    exa.search.mockRejectedValueOnce(new Error('upstream 500'));
+    const records = storeSnapshotRecords(10);
+    await expect(guardSnapshots(client, AS_OF, records).search('q')).rejects.toThrow('upstream 500');
+    expect(records.spent()).toBe(1);
+    expect(records.recorded()).toBe(0);
+  });
+});
+
+describe('exa.search with stream and a snapshot', () => {
+  it('names stream as the conflicting parameter', async () => {
+    const { exa, client } = fakeExa();
+    const result = await dispatchOperation('exa.search', { query: 'q', stream: true }, client, 'strict', { asOf: AS_OF });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]).toMatchObject({
+      text: 'Error in exa.search: TEMPORAL_BOUNDARY: stream cannot be combined with a snapshot: snapshot results arrive in one response. Drop stream: true.',
+    });
+    expect(exa.search).not.toHaveBeenCalled();
   });
 });

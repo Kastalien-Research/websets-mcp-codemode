@@ -190,6 +190,26 @@ function initSchema(db: Database.Database): void {
         json_extract(structured,'$.estimated_revenue') AS estimated_revenue,
         cost_dollars, fetched_at
       FROM connect_enrichments WHERE providers LIKE '%fiber_ai%';
+
+    -- Exa Snapshot requests this server made, replayed for identical requests.
+    CREATE TABLE IF NOT EXISTS snapshot_requests (
+      request_key    TEXT PRIMARY KEY,
+      endpoint       TEXT NOT NULL,
+      snapshot_as_of TEXT NOT NULL,
+      request        JSON NOT NULL,
+      response       JSON NOT NULL,
+      response_hash  TEXT NOT NULL,
+      fetched_at     TEXT NOT NULL
+    );
+
+    -- One row per upstream request carrying snapshotAsOf, successful or not.
+    CREATE TABLE IF NOT EXISTS snapshot_spend (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      at             TEXT NOT NULL,
+      endpoint       TEXT NOT NULL,
+      snapshot_as_of TEXT NOT NULL,
+      request_key    TEXT NOT NULL
+    );
   `);
 }
 
@@ -813,4 +833,45 @@ export function upsertConnectEnrichment(rec: ConnectEnrichmentRecord): void {
     effort: rec.effort ?? null,
     runId: rec.runId ?? null,
   });
+}
+
+// --- Exa Snapshot records ---
+
+export interface SnapshotRecordRow {
+  request_key: string;
+  endpoint: string;
+  snapshot_as_of: string;
+  request: string;
+  response: string;
+  response_hash: string;
+  fetched_at: string;
+}
+
+export function getSnapshotRecord(requestKey: string): SnapshotRecordRow | null {
+  const row = getDb()
+    .prepare('SELECT * FROM snapshot_requests WHERE request_key = ?')
+    .get(requestKey) as SnapshotRecordRow | undefined;
+  return row ?? null;
+}
+
+export function insertSnapshotRecord(row: SnapshotRecordRow): void {
+  getDb().prepare(
+    `INSERT OR REPLACE INTO snapshot_requests
+       (request_key, endpoint, snapshot_as_of, request, response, response_hash, fetched_at)
+     VALUES (@request_key, @endpoint, @snapshot_as_of, @request, @response, @response_hash, @fetched_at)`,
+  ).run(row);
+}
+
+export function countSnapshotRecords(): number {
+  return (getDb().prepare('SELECT COUNT(*) AS n FROM snapshot_requests').get() as { n: number }).n;
+}
+
+export function insertSnapshotSpend(entry: { endpoint: string; snapshotAsOf: string; requestKey: string }): void {
+  getDb().prepare(
+    'INSERT INTO snapshot_spend (at, endpoint, snapshot_as_of, request_key) VALUES (?, ?, ?, ?)',
+  ).run(new Date().toISOString(), entry.endpoint, entry.snapshotAsOf, entry.requestKey);
+}
+
+export function countSnapshotSpend(): number {
+  return (getDb().prepare('SELECT COUNT(*) AS n FROM snapshot_spend').get() as { n: number }).n;
 }

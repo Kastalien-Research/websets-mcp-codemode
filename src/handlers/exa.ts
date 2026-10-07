@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { OperationHandler } from './types.js';
 import { successResult, errorResult, requireParams } from './types.js';
 import { snapshotInstant } from '../temporal/instant.js';
+import { TemporalBoundaryError } from '../temporal/boundary.js';
 
 export const Schemas = {
   search: z.object({
@@ -125,6 +126,12 @@ export const search: OperationHandler = async (args, exa, ctx) => {
     if (args.compliance) opts.compliance = args.compliance;
     if (args.outputSchema) opts.outputSchema = args.outputSchema;
     const hasOpts = Object.keys(opts).length > 0;
+
+    if (args.stream === true && (ctx?.asOf !== undefined || (args.contents as any)?.snapshotAsOf !== undefined)) {
+      return errorResult('exa.search', new TemporalBoundaryError(
+        'stream cannot be combined with a snapshot: snapshot results arrive in one response. Drop stream: true.',
+      ));
+    }
 
     if (args.stream === true) {
       const gen = (exa as any).streamSearch(

@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Exa } from 'exa-js';
 import { getAccountStatus, _resetStatusCache } from '../statusTool.js';
+import { closeDb, getDb } from '../../store/db.js';
+import { storeSnapshotRecords } from '../../temporal/records.js';
 
 // --- Fixtures ---
 
@@ -25,6 +27,9 @@ const FAST_TIMEOUT = 20;
 describe('getAccountStatus degraded signal', () => {
   beforeEach(() => {
     _resetStatusCache();
+    // The snapshot section reads the local store; keep tests off data/websets.db.
+    closeDb();
+    getDb(':memory:');
   });
 
   it('reports healthy when both live calls succeed', async () => {
@@ -125,5 +130,40 @@ describe('getAccountStatus degraded signal', () => {
     expect(first.degraded).toBe(true);
     await getAccountStatus(degraded.exa, 'safe', { timeoutMs: FAST_TIMEOUT });
     expect(degraded.mock.websets.list).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('getAccountStatus snapshot section', () => {
+  beforeEach(() => {
+    _resetStatusCache();
+    closeDb();
+    getDb(':memory:');
+  });
+
+  it('reports spend against the budget, recorded requests and the pinnable window', async () => {
+    const records = storeSnapshotRecords(100);
+    records.spend({ requestKey: 'k1', endpoint: 'search', snapshotAsOf: '2026-08-01T00:00:00Z' });
+    records.spend({ requestKey: 'k2', endpoint: 'contents', snapshotAsOf: '2026-08-01T00:00:00Z' });
+    records.record({ requestKey: 'k1', endpoint: 'search', snapshotAsOf: '2026-08-01T00:00:00Z', request: {}, response: { results: [] } });
+
+    const status = await getAccountStatus(makeExa().exa, 'safe', { now: new Date('2026-10-05T00:00:00Z'), snapshotRecords: records });
+
+    expect(status.snapshot).toMatchObject({
+      used: 2,
+      budget: 100,
+      remaining: 98,
+      recorded: 1,
+      window: { from: '2026-05-05T00:00:00Z', to: '2026-10-05T00:00:00Z' },
+    });
+  });
+
+  it('reflects new spend even while the live sections are served from cache', async () => {
+    const records = storeSnapshotRecords(100);
+    const { exa, mock } = makeExa();
+    await getAccountStatus(exa, 'safe', { snapshotRecords: records });
+    records.spend({ requestKey: 'k', endpoint: 'search', snapshotAsOf: '2026-08-01T00:00:00Z' });
+    const second = await getAccountStatus(exa, 'safe', { snapshotRecords: records });
+    expect(mock.websets.list).toHaveBeenCalledOnce();
+    expect(second.snapshot?.used).toBe(1);
   });
 });

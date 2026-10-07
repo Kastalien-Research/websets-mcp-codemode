@@ -418,6 +418,6 @@ export async function dispatchOperation(
 
   // Handlers (and the workflows they start) only ever see the guarded client,
   // so snapshot rules hold however deep the call that reaches Exa.
-  const result = await meta.handler(validatedArgs, guardSnapshots(exa, ctx?.asOf), ctx);
+  const result = await meta.handler(validatedArgs, guardSnapshots(exa, ctx?.asOf, ctx?.snapshotRecords), ctx);
   return withCoercionMetadata(result, coercion.coercions, coercion.warnings);
 }

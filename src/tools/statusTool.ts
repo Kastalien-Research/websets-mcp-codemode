@@ -4,6 +4,8 @@ import type { Exa } from 'exa-js';
 import { taskStore } from '../lib/taskStore.js';
 import { OPERATIONS } from './operations.js';
 import type { CompatMode } from './coercion.js';
+import { formatInstant, snapshotWindowStart } from '../temporal/instant.js';
+import { storeSnapshotRecords, type SnapshotRecords } from '../temporal/records.js';
 
 export interface WebsetsSummary {
   count: number;
@@ -27,6 +29,15 @@ export interface AccountStatus {
   /** Null when the live monitors call failed. */
   monitors: {
     active: number;
+  } | null;
+  /** Exa Snapshot quota and window; null when the local store is unavailable. */
+  snapshot: {
+    used: number;
+    budget: number;
+    remaining: number;
+    recorded: number;
+    window: { from: string; to: string };
+    note: string;
   } | null;
   capabilities: {
     tools: string[];
@@ -102,6 +113,29 @@ function summarizeWebsets(raw: { data?: Array<Record<string, unknown>>; hasMore?
 export interface GetAccountStatusOptions {
   /** Per-call timeout in ms (test seam; defaults to STATUS_TIMEOUT_MS). */
   timeoutMs?: number;
+  /** Clock for the Snapshot window (test seam). */
+  now?: Date;
+  /** Snapshot ledger to report (test seam; defaults to the local store). */
+  snapshotRecords?: SnapshotRecords;
+}
+
+/** Computed on every call, outside the cache: spend changes between calls. */
+function snapshotStatus(options: GetAccountStatusOptions): AccountStatus['snapshot'] {
+  const now = options.now ?? new Date();
+  const records = options.snapshotRecords ?? storeSnapshotRecords();
+  try {
+    const used = records.spent();
+    return {
+      used,
+      budget: records.budget,
+      remaining: Math.max(0, records.budget - used),
+      recorded: records.recorded(),
+      window: { from: formatInstant(snapshotWindowStart(now)), to: formatInstant(now) },
+      note: 'Exa Snapshot requests this server has sent (replays of recorded requests are free). Pin a run with execute({ asOf }) to an instant between window.from and window.to.',
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function getAccountStatus(
@@ -109,7 +143,7 @@ export async function getAccountStatus(
   compatMode: string,
   options: GetAccountStatusOptions = {},
 ): Promise<AccountStatus> {
-  if (cached && Date.now() < cached.expiresAt) return cached.data;
+  if (cached && Date.now() < cached.expiresAt) return { ...cached.data, snapshot: snapshotStatus(options) };
 
   const timeoutMs = options.timeoutMs ?? STATUS_TIMEOUT_MS;
 
@@ -164,6 +198,7 @@ export async function getAccountStatus(
       recent_errors: recentErrors,
     },
     monitors: monitorsData,
+    snapshot: snapshotStatus(options),
     capabilities: {
       tools: ['search', 'execute', 'status'],
       operationCount: Object.keys(OPERATIONS).length,

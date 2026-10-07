@@ -1,4 +1,5 @@
 import type { Exa } from 'exa-js';
+import type { SnapshotRecords } from '../temporal/records.js';
 
 export type TextContent = { type: 'text'; text: string };
 
@@ -41,6 +42,8 @@ export interface OperationContext {
    * bounded by it (see src/temporal/boundary.ts).
    */
   asOf?: string;
+  /** Where snapshot requests are recorded, replayed and budgeted; omitted, they are not. */
+  snapshotRecords?: SnapshotRecords;
 }
 
 export type OperationHandler = (

@@ -5,6 +5,7 @@ import { executeInSandbox } from './sandbox.js';
 import type { CompatMode } from './coercion.js';
 import type { OperationContext, ToolResult } from '../handlers/types.js';
 import { parseAsOf, snapshotInstant } from '../temporal/instant.js';
+import { storeSnapshotRecords } from '../temporal/records.js';
 
 export const executeInputSchema = z.object({
   code: z.string().describe('JavaScript code to execute in the sandbox'),
@@ -45,6 +46,9 @@ PINNED RUNS (asOf):
   return the newest stored version of each page at or before it, and each response
   carries a temporal block saying how the bound was checked. Every other operation
   is refused with TEMPORAL_BOUNDARY.
+- Snapshot requests are recorded: an identical request at the same instant replays
+  from the record for free (temporal.source "record"). New ones count against a
+  local budget shown by the status tool.
 - Content is bounded, discovery is not: which pages search finds, and their order,
   still come from Exa's current index.`;
 
@@ -139,6 +143,7 @@ export function registerExecuteTool(
   options: ExecuteToolOptions = {},
 ): void {
   const compatMode = options.defaultCompatMode ?? 'strict';
+  const snapshotRecords = storeSnapshotRecords();
 
   server.registerTool(
     'execute',
@@ -173,7 +178,7 @@ export function registerExecuteTool(
           }
         : undefined;
 
-      return runExecute(input, exa, { compatMode, ctx: { sendProgress, signal: extra?.signal } });
+      return runExecute(input, exa, { compatMode, ctx: { sendProgress, signal: extra?.signal, snapshotRecords } });
     },
   );
 }
