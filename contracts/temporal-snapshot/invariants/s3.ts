@@ -190,6 +190,24 @@ export const checks: Record<string, Check> = {
   async 'S3.2'(env) {
     const runs = await sequences(env);
     const problems = runs.flatMap(r => r.problems);
+
+    // "Identical" covers every argument, not just the target and the instant.
+    const h = await harness(env);
+    const A = iso(env.now.getTime() - 30 * DAY);
+    const rec = recordingClient(numberedResponder().responder);
+    const variants: Array<[string, Record<string, unknown>]> = [
+      ['exa.search', { query: 'delta' }],
+      ['exa.search', { query: 'delta', numResults: 3 }],
+      ['exa.search', { query: 'delta', contents: { highlights: true } }],
+      ['exa.getContents', { urls: ['https://example.com/9'] }],
+      ['exa.getContents', { urls: ['https://example.com/9'], text: true }],
+      ['exa.getContents', { ids: ['https://example.com/9'], summary: true }],
+    ];
+    for (const [op, args] of variants) {
+      const before = rec.calls.length;
+      await h.dispatch(op, args, A, rec.client);
+      if (rec.calls.length - before !== 1) problems.push(`${op} ${JSON.stringify(args)} was answered from a record of different arguments`);
+    }
     const upstream = runs.reduce((s, r) => s + r.upstream, 0);
     const replays = runs.reduce((s, r) => s + r.replays, 0);
     if (replays === 0 || upstream === 0) problems.push(`degenerate sequences: ${upstream} upstream, ${replays} replays`);
