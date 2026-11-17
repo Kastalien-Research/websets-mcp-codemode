@@ -2,7 +2,7 @@ export const meta = {
   name: 'source-jobs',
   description: 'Job sourcing: sweep a role family across ATS boards with Exa search (facts extracted per posting), research each company once with an Exa agent run, keep all state in the local store → SQL dedupe/score/tier → liveness spot-check → ranked CSV. Websets remain as an optional fallback engine.',
   whenToUse:
-    'Build a 100-500 row list of open job postings. {engine}: "search" (default — Exa /search over applicant-tracking boards, minutes and a few dollars), "websets" (one 100-item Webset per shard, hours), or "hybrid" (search first, websets only if the target is still unmet). Defaults target NYC customer-facing engineering roles (Forward Deployed / Applied AI / MTS / Product Engineer, plus finance). Args (all optional): {runTag} names the run and makes it idempotent (re-running a tag reuses its websets), {target} qualified unique jobs to stop at (default 300), {maxShards} (12), {concurrency} websets populating at once (2; lowered automatically if Exa refuses a create for rate/concurrency reasons), {perShard} (100), {verifyTop} postings to liveness-check (50), {location}, {payFloor, payMin, payMax}, {yoeMin, yoeMax}, {shards:[{key,label,query,roleCriterion}]} to replace the seed shards, {outputCsv}, {dbPath}, {model}, {cheapModel}, {perSearch} results per search call (50), {domainGroups}, {maxCompanies} to research (400), {dryRun:true} to print the plan without spending anything.',
+    'Build a 100-500 row list of open job postings. {engine}: "store" (no discovery: re-score/enrich/verify/export rows an earlier run of this runTag stored), "search" (default — Exa /search over applicant-tracking boards, minutes and a few dollars), "websets" (one 100-item Webset per shard, hours), or "hybrid" (search first, websets only if the target is still unmet). Defaults target NYC customer-facing engineering roles (Forward Deployed / Applied AI / MTS / Product Engineer, plus finance). Args (all optional): {runTag} names the run and makes it idempotent (re-running a tag reuses its websets), {target} qualified unique jobs to stop at (default 300), {maxShards} (12), {concurrency} websets populating at once (2; lowered automatically if Exa refuses a create for rate/concurrency reasons), {perShard} (100), {verifyTop} postings to liveness-check (50) and {verifyTier:"A"} to confine that to tier A, {payLowMin} low end of the pay range tier A requires (150000), {excludeTitles}, {location}, {payFloor, payMin, payMax}, {yoeMin, yoeMax}, {shards:[{key,label,query,roleCriterion}]} to replace the seed shards, {outputCsv}, {dbPath}, {model}, {cheapModel}, {perSearch} results per search call (50), {domainGroups}, {maxCompanies} to research (400), {dryRun:true} to print the plan without spending anything.',
   phases: [
     { title: 'Search', detail: 'per shard: title variants × ATS domain groups via exa.search with a structured summary; hard gates applied in the sandbox, rows written to the store' },
     { title: 'Enrich', detail: 'one Exa agent run per 10 companies: former founders on staff? sector? — stored as company facts and joined in SQL' },
@@ -31,6 +31,16 @@ const CONCURRENCY = Math.max(1, int(A.concurrency ?? A.waveSize, 2))
 const MAX_REFUSALS = int(A.maxRefusals, 6)
 const PER_SHARD = Math.max(1, int(A.perShard, 100))
 const VERIFY_TOP = Math.max(0, int(A.verifyTop, 50))
+// 'A' restricts the verify queue to tier A (set verifyTop high to check the whole shortlist).
+const VERIFY_TIERS = A.verifyTier === 'A' ? "('A')" : "('A', 'B')"
+// Tier A also needs the LOW end of the posted range to reach this, so a
+// "$100k-$250k" range no longer counts as in-band just because its top does.
+const PAY_LOW_MIN = int(A.payLowMin, 150000)
+// Titles outside the role family that per-page role checks let through. Lower-case substrings.
+const EXCLUDE_TITLES = A.excludeTitles ?? ['manager', 'director', 'head of', 'vice president', 'recruiter', 'internship', ' intern', 'quant', 'account executive', 'designer']
+if (!Array.isArray(EXCLUDE_TITLES) || !EXCLUDE_TITLES.every((t) => typeof t === 'string' && /^[a-z ]{2,40}$/.test(t))) {
+  return { error: 'excludeTitles must be an array of lower-case words/phrases (letters and spaces only).' }
+}
 const MAX_POLLS = int(A.maxPolls, 30) // poll agents per shard; each waits up to POLL_CALLS × ~100s
 const POLL_CALLS = 5
 const MIN_GAIN = int(A.minGain, 10)
@@ -41,7 +51,7 @@ const PAY_MAX = int(A.payMax, 300000)
 const YOE_MIN = int(A.yoeMin, 2)
 const YOE_MAX = int(A.yoeMax, 5)
 const ENGINE = A.engine ?? 'search'
-if (!['search', 'websets', 'hybrid'].includes(ENGINE)) return { error: 'engine must be "search", "websets" or "hybrid".' }
+if (!['search', 'websets', 'hybrid', 'store'].includes(ENGINE)) return { error: 'engine must be "search", "websets", "hybrid" or "store".' }
 const PER_SEARCH = Math.min(100, Math.max(1, int(A.perSearch, 50)))
 const SEARCH_CONCURRENCY = Math.max(1, int(A.searchConcurrency, 3))
 const MAX_COMPANIES = Math.max(0, int(A.maxCompanies, 400))
@@ -178,7 +188,7 @@ function cleanShards(list, taken) {
 const takenKeys = new Set()
 const shardList = cleanShards(A.shards ?? SEED_SHARDS, takenKeys)
 // The webset queue; the search engine walks shardList directly.
-const queue = ENGINE === 'search' ? [] : [...shardList]
+const queue = ENGINE === 'search' || ENGINE === 'store' ? [] : [...shardList]
 if (shardList.length === 0) return { error: 'No valid shards: each needs {key, query, roleCriterion}.' }
 
 // --- Webset definition shared by every shard ----------------------------------
@@ -267,7 +277,8 @@ const ROWS_SQL = `SELECT a.item_id AS item_id,
        WHEN ${jx('a', 'founderSignal')} IS NOT NULL OR cf.cf_id IS NOT NULL THEN ${q(F_NONE)} ELSE '' END AS founder_signal,
   coalesce(nullif(${jx('a', 'founderEvidence')}, ''), cf.cf_evidence) AS founder_evidence,
   cf.cf_id AS cf_id,
-  c.id AS chk_id, ${jx('c', 'live')} AS chk_live, ${jx('c', 'pageSalaryMin')} AS page_min,
+  c.id AS chk_id, coalesce(${jx('c', 'v')}, 1) AS chk_v, ${jx('c', 'live')} AS chk_live,
+  ${jx('c', 'roleFit')} AS chk_role, ${jx('c', 'agency')} AS chk_agency, ${jx('c', 'pageSalaryMin')} AS page_min,
   ${jx('c', 'pageSalaryMax')} AS page_max, ${jx('c', 'note')} AS chk_note
 FROM annotations a
 LEFT JOIN annotations c ON c.item_id = a.item_id AND ${latest('c', 'job_check')}
@@ -289,34 +300,37 @@ const FIT_SQL = `SELECT k.*,
        WHEN k.yoe_min >= ${YOE_MIN} THEN 'in_range' ELSE 'below_range' END AS yoe_fit,
   CASE WHEN k.chk_id IS NULL THEN 'unchecked' WHEN k.chk_live = 1 THEN 'live'
        WHEN k.chk_live = 0 THEN 'closed' ELSE 'unclear' END AS posting_status,
+  CASE WHEN ${EXCLUDE_TITLES.map((t) => `lower(k.title) LIKE ${q('%' + t + '%')}`).join(' OR ') || '0'} THEN 1 ELSE 0 END AS title_excluded,
+  CASE WHEN k.chk_agency = 1 THEN 'agency or aggregator' WHEN k.chk_role = 0 THEN 'off-family' WHEN k.chk_role = 1 THEN 'fits' ELSE '' END AS role_check,
   CASE WHEN k.chk_id IS NULL OR k.page_max IS NULL THEN ''
        WHEN abs(k.page_max - k.pay_hi) <= 0.05 * k.pay_hi
         AND abs(coalesce(k.page_min, k.page_max) - k.pay_lo) <= 0.05 * k.pay_lo THEN 'confirmed'
        ELSE 'mismatch: page says ' || cast(coalesce(k.page_min, k.page_max) AS integer) || '-' || cast(k.page_max AS integer) END AS pay_check
 FROM (${KEYED_SQL}) k`
 
-// Tier A: pay overlaps the desired band AND the YOE ask is in range.
+// Tier A: pay overlaps the desired band with its low end at or above PAY_LOW_MIN, AND the YOE ask is in range.
 // Tier B: clears the pay floor and is not too senior, but something is unknown or only floor-level.
-// Tier C: disqualified (below floor, wants more experience than YOE_MAX, or found closed) — kept, at the bottom.
+// Tier C: disqualified (below floor, wants more experience than YOE_MAX, an excluded title, or — once the live
+// page has been read — closed, off-family, or an agency/aggregator copy) — kept, at the bottom.
 const SCORED_SQL = `SELECT f.*,
   (CASE f.pay_fit WHEN 'in_range' THEN 40 WHEN 'above_range' THEN 40 WHEN 'floor_only' THEN 20 WHEN 'unknown' THEN 10 ELSE 0 END)
   + (CASE f.yoe_fit WHEN 'in_range' THEN 30 WHEN 'below_range' THEN 15 WHEN 'unknown' THEN 15 ELSE 0 END)
   + (CASE f.founder_signal WHEN ${q(F_EXPLICIT)} THEN 20 WHEN ${q(F_STAFF)} THEN 10 ELSE 0 END)
   - (CASE WHEN f.finance_req = ${q(FIN_REQUIRED)} THEN 15 ELSE 0 END) AS score,
-  CASE WHEN f.pay_fit = 'below_floor' OR f.yoe_fit = 'too_senior' THEN 'C'
-       WHEN f.pay_fit IN ('in_range', 'above_range') AND f.yoe_fit = 'in_range' THEN 'A' ELSE 'B' END AS base_tier
+  CASE WHEN f.pay_fit = 'below_floor' OR f.yoe_fit = 'too_senior' OR f.title_excluded = 1 THEN 'C'
+       WHEN f.pay_fit IN ('in_range', 'above_range') AND f.yoe_fit = 'in_range' AND f.pay_lo >= ${PAY_LOW_MIN} THEN 'A' ELSE 'B' END AS base_tier
 FROM (${FIT_SQL}) f`
 
 // Two dedupe passes: same company+title (one job cross-posted on several boards), then same URL.
 // A search-engine row wins a tie: it is the company's own ATS page, not an aggregator's copy.
-const DEDUPED_SQL = `SELECT u.*, CASE WHEN u.chk_live = 0 THEN 'C' ELSE u.base_tier END AS tier FROM (
+const DEDUPED_SQL = `SELECT u.*, CASE WHEN u.chk_live = 0 OR u.chk_role = 0 OR u.chk_agency = 1 THEN 'C' ELSE u.base_tier END AS tier FROM (
   SELECT t.*, row_number() OVER (PARTITION BY t.url_key ORDER BY t.score DESC, t.item_id) AS rn_url FROM (
     SELECT s.*, row_number() OVER (PARTITION BY s.ct_key ORDER BY (s.engine = 'search') DESC, s.score DESC, s.item_id) AS rn_ct FROM (${SCORED_SQL}) s
   ) t WHERE t.rn_ct = 1
 ) u WHERE u.rn_url = 1`
 
 // The verify queue: best postings first, in an order that does not depend on check results.
-const TOP_SQL = `SELECT d.* FROM (${DEDUPED_SQL}) d WHERE d.base_tier IN ('A', 'B') ORDER BY d.base_tier, d.score DESC, d.item_id LIMIT ${VERIFY_TOP}`
+const TOP_SQL = `SELECT d.* FROM (${DEDUPED_SQL}) d WHERE d.base_tier IN ${VERIFY_TIERS} ORDER BY d.base_tier, d.score DESC, d.item_id LIMIT ${VERIFY_TOP}`
 
 // --- Company research: one Exa agent run per batch of companies ---------------
 // "Does this company employ former founders" is a fact about the company, not
@@ -325,13 +339,14 @@ const TOP_SQL = `SELECT d.* FROM (${DEDUPED_SQL}) d WHERE d.base_tier IN ('A', '
 // index, not the model's spelling of the name, decides which company it is.
 const COMPANY_LIST_SQL = `SELECT d.ckey AS ckey, min(d.company) AS company, min(d.url) AS url, max(d.cf_id IS NOT NULL) AS has_fact
 FROM (${DEDUPED_SQL}) d WHERE d.base_tier IN ('A', 'B') AND d.engine = 'search' AND d.ckey <> ''
-GROUP BY d.ckey ORDER BY d.ckey LIMIT ${MAX_COMPANIES}`
+GROUP BY d.ckey ORDER BY min(d.base_tier), d.ckey LIMIT ${MAX_COMPANIES}`
 
 const CENSUS_SQL = `SELECT count(*) AS uniqueJobs,
   coalesce(sum(d.tier = 'A'), 0) AS tierA, coalesce(sum(d.tier = 'B'), 0) AS tierB, coalesce(sum(d.tier = 'C'), 0) AS tierC,
   coalesce(sum(d.chk_id IS NOT NULL), 0) AS checked,
   (SELECT count(*) FROM annotations a WHERE ${latest('a', 'job_row')}) AS rawRows,
-  (SELECT count(*) FROM (${TOP_SQL}) x WHERE x.chk_id IS NULL) AS uncheckedTop,
+  (SELECT count(*) FROM (${TOP_SQL}) x WHERE x.chk_id IS NULL OR x.chk_v < 2) AS uncheckedTop,
+  (SELECT count(*) FROM (${TOP_SQL}) x) AS topCount,
   (SELECT count(*) FROM (${COMPANY_LIST_SQL}) l) AS companies,
   (SELECT count(*) FROM (${COMPANY_LIST_SQL}) l WHERE l.has_fact = 0) AS companiesMissing
 FROM (${DEDUPED_SQL}) d`
@@ -340,7 +355,7 @@ const BY_SHARD_SQL = `SELECT d.shard AS shard, count(*) AS uniqueJobs, coalesce(
 const EXPORT_SQL = `SELECT row_number() OVER (ORDER BY d.tier, d.score DESC, d.company, d.item_id) AS rank,
   d.tier, d.score, d.title, d.company, d.url, d.salary_min, d.salary_max, d.pay_fit, d.yoe_min, d.yoe_fit,
   d.arrangement, d.sector, d.finance_req, d.founder_signal, d.founder_evidence,
-  d.posting_status, d.pay_check, d.chk_note AS check_note, d.shard, d.engine AS source, d.webset_id, d.item_id
+  d.posting_status, d.role_check, d.pay_check, d.chk_note AS check_note, d.shard, d.engine AS source, d.webset_id, d.item_id
 FROM (${DEDUPED_SQL}) d ORDER BY d.tier, d.score DESC, d.company, d.item_id;\n`
 
 // --- Sandbox programs ---------------------------------------------------------
@@ -513,9 +528,10 @@ for (const c of out) {
 return { requested: todo.length, written, status: String(run.status), costDollars: (run.costDollars && run.costDollars.total) || 0 };`
 
 const VERIFY_BATCH = 5
-const verifyFetchCode = (where) => String.raw`const sel = await callOperation('store.query', { sql: ${js(`SELECT x.item_id, x.url, x.title, x.company, x.salary_min, x.salary_max, x.yoe_min FROM (${TOP_SQL}) x ${where}`)} });
+const verifyFetchCode = (where) => String.raw`const sel = await callOperation('store.query', { sql: ${js(`SELECT x.item_id, x.url, x.title, x.company, x.salary_min, x.salary_max, x.yoe_min, x.chk_id, x.chk_v FROM (${TOP_SQL}) x ${where}`)} });
+const todo = sel.rows.filter((r) => r.chk_id == null || r.chk_v < 2);
 const out = [];
-await Promise.all(sel.rows.map(async (r) => {
+await Promise.all(todo.map(async (r) => {
   let text = null, fetchError = null;
   try {
     const res = await callOperation('exa.getContents', { urls: [r.url], text: { maxCharacters: 6000 }, livecrawl: 'preferred' });
@@ -527,14 +543,15 @@ await Promise.all(sel.rows.map(async (r) => {
 }));
 return out;`
 
-const verifyWriteCode = String.raw`const CHECKS = [/* FILL IN: one { itemId, live, pageSalaryMin, pageSalaryMax, pageYoeMin, note } per posting */];
+const verifyWriteCode = String.raw`const CHECKS = [/* FILL IN: one { itemId, live, roleFit, agency, pageSalaryMin, pageSalaryMax, pageYoeMin, note } per posting */];
 const clean = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 300);
 const n = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
 const written = [];
 for (const c of CHECKS) {
   const has = await callOperation('store.query', { sql: "SELECT count(*) AS n FROM annotations WHERE item_id = ? AND type = 'job_row' AND source = ?", params: [String(c.itemId), ${js(SRC)}] });
   if (!has.rows[0].n) continue;
-  const value = { live: c.live === true ? true : c.live === false ? false : null, pageSalaryMin: n(c.pageSalaryMin), pageSalaryMax: n(c.pageSalaryMax), pageYoeMin: n(c.pageYoeMin), note: clean(c.note) };
+  const tri = (v) => (v === true ? true : v === false ? false : null);
+  const value = { v: 2, live: tri(c.live), roleFit: tri(c.roleFit), agency: tri(c.agency), pageSalaryMin: n(c.pageSalaryMin), pageSalaryMax: n(c.pageSalaryMax), pageYoeMin: n(c.pageYoeMin), note: clean(c.note) };
   await callOperation('store.annotate', { itemId: String(c.itemId), type: 'job_check', value: JSON.stringify(value), source: ${js(SRC)} });
   written.push(String(c.itemId));
 }
@@ -612,7 +629,7 @@ const CREATE_SCHEMA = schemaOf({ websetId: str, reused: { type: 'boolean' } })
 const POLL_SCHEMA = schemaOf({ status: str, found: num })
 const NORMALIZE_SCHEMA = schemaOf({ total: num, passing: num, truncated: num, mappedColumns: num, written: num, failed: num })
 const CENSUS_SCHEMA = schemaOf({
-  uniqueJobs: num, tierA: num, tierB: num, tierC: num, checked: num, rawRows: num, uncheckedTop: num, companies: num, companiesMissing: num,
+  uniqueJobs: num, tierA: num, tierB: num, tierC: num, checked: num, rawRows: num, uncheckedTop: num, topCount: num, companies: num, companiesMissing: num,
   byShard: { type: 'array', items: { type: 'object', properties: { shard: str, uniqueJobs: num, qualified: num } } },
 })
 const SEARCH_SCHEMA = schemaOf({ attempted: num, calls: num, results: num, kept: num, notPosting: num, aggregator: num, closed: num, wrongLocation: num, wrongRole: num, repeat: num, parseFail: num, storeFail: num, errors: num, costDollars: num, firstError: str })
@@ -666,7 +683,7 @@ return { waitedSeconds: 90 };`
 async function takeCensus(tag) {
   for (let attempt = 1; attempt <= 2; attempt++) {
     const c = await runCode(censusCode, { label: `census:${tag}${attempt > 1 ? ':retry' : ''}`, phase: 'Census', schema: CENSUS_SCHEMA })
-    if (c && ['uniqueJobs', 'tierA', 'tierB', 'tierC', 'checked', 'rawRows', 'uncheckedTop', 'companies', 'companiesMissing'].every((k) => isNum(c[k]))) {
+    if (c && ['uniqueJobs', 'tierA', 'tierB', 'tierC', 'checked', 'rawRows', 'uncheckedTop', 'topCount', 'companies', 'companiesMissing'].every((k) => isNum(c[k]))) {
       return { ...c, qualified: c.tierA + c.tierB, byShard: Array.isArray(c.byShard) ? c.byShard : [] }
     }
     log(`Census ${tag} attempt ${attempt} returned no usable counts${c?.error ? `: ${String(c.error).slice(0, 200)}` : ''}`)
@@ -784,7 +801,7 @@ const results = []
 const running = new Map() // shard key → promise of { shard, r }
 const refusals = new Map() // shard key → times its create was limit-refused
 let limit = CONCURRENCY
-let census = { uniqueJobs: 0, tierA: 0, tierB: 0, tierC: 0, qualified: 0, checked: 0, rawRows: 0, uncheckedTop: 0, companies: 0, companiesMissing: 0, byShard: [] }
+let census = { uniqueJobs: 0, tierA: 0, tierB: 0, tierC: 0, qualified: 0, checked: 0, rawRows: 0, uncheckedTop: 0, topCount: 0, companies: 0, companiesMissing: 0, byShard: [] }
 let dryShards = 0
 let stopReason = null
 let plannerSpent = false
@@ -836,7 +853,14 @@ async function searchShards(list, round) {
   log(`Search round ${round}: ${census.rawRows} rows → ${census.uniqueJobs} unique; tiers A/B/C = ${census.tierA}/${census.tierB}/${census.tierC}; qualified ${census.qualified}/${TARGET}; Exa search spend so far ≈ $${exaCost.search.toFixed(2)}`)
 }
 
-if (ENGINE !== 'websets') {
+if (ENGINE === 'store') {
+  // Re-score, enrich, verify and export what earlier runs of this tag already
+  // collected — no discovery, so no search or webset spend.
+  const c0 = await takeCensus('stored')
+  if (c0) census = c0
+  stopReason = 'reused stored rows (no discovery)'
+  log(`Store engine: ${census.rawRows} stored rows → ${census.uniqueJobs} unique; tiers A/B/C = ${census.tierA}/${census.tierB}/${census.tierC}`)
+} else if (ENGINE !== 'websets') {
   phase('Search')
   log(`Search engine: ${shardList.length} shard(s) × ${DOMAIN_GROUPS.length} domain group(s), up to ${PER_SEARCH} results per search`)
   await searchShards(shardList, 1)
@@ -980,6 +1004,12 @@ const verifyAgent = (where, label) =>
       `- pageSalaryMin / pageSalaryMax: the annual base salary range in USD exactly as the page states it, as plain ` +
       `numbers; null when the page gives none. Do not copy the listed values — report what you read.\n` +
       `- pageYoeMin: minimum years of experience the page asks for, or null.\n` +
+      `- roleFit: true if the page describes a code-writing engineering role that works directly with customers or ` +
+      `users and owns its work end to end (the Forward Deployed / Applied AI / Product Engineer / Member of Technical ` +
+      `Staff family); false if it is plainly something else (people management, sales, support, recruiting, pure ` +
+      `research, quant trading, design); null if the page is too thin to tell.\n` +
+      `- agency: true if the page is published by a staffing firm, recruiting agency or job aggregator rather than ` +
+      `by the hiring company or its applicant-tracking system; false otherwise; null if you cannot tell.\n` +
       `- note: one short clause a job seeker would want (e.g. "range is for SF, NYC not stated", "requires clearance").\n\n` +
       `STEP 3 — record the checks by running this code with the CHECKS array filled in (change nothing else):\n\n` +
       `<<<CODE\n${verifyWriteCode}\nCODE\n\n` +
@@ -991,7 +1021,7 @@ if (VERIFY_TOP > 0 && census.uncheckedTop > 0) {
   phase('Verify')
   const toCheck = census.uncheckedTop
   // Round 1: fixed, non-overlapping slices of the ranked queue, in parallel.
-  const slices = Math.ceil(Math.min(VERIFY_TOP, census.qualified) / VERIFY_BATCH)
+  const slices = Math.ceil(census.topCount / VERIFY_BATCH)
   await parallel(Array.from({ length: slices }, (_, i) => () =>
     verifyAgent(`LIMIT ${VERIFY_BATCH} OFFSET ${i * VERIFY_BATCH}`, `verify:${i * VERIFY_BATCH + 1}-${(i + 1) * VERIFY_BATCH}`)))
   let after = await takeCensus('post-verify')
@@ -1000,7 +1030,7 @@ if (VERIFY_TOP > 0 && census.uncheckedTop > 0) {
   if (after && after.uncheckedTop > 0) {
     const retries = Math.ceil(after.uncheckedTop / VERIFY_BATCH)
     log(`${after.uncheckedTop} of the top postings still unchecked — ${retries} follow-up batch(es)`)
-    for (let i = 0; i < retries; i++) await verifyAgent(`WHERE x.chk_id IS NULL LIMIT ${VERIFY_BATCH}`, `verify:retry${i + 1}`)
+    for (let i = 0; i < retries; i++) await verifyAgent(`WHERE x.chk_id IS NULL OR x.chk_v < 2 LIMIT ${VERIFY_BATCH}`, `verify:retry${i + 1}`)
     after = await takeCensus('post-verify-retry')
   }
   if (after) {

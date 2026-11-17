@@ -143,7 +143,7 @@ async function runWorkflow(args, hooks = {}) {
     if (label.startsWith('verify:')) {
       const rows = await runSandbox(extract(prompt, 'CODE'))
       if (rows.length === 0) return { written: 0, itemIds: [] }
-      const checks = rows.map((r) => ({ itemId: r.itemId, live: !/hedge/.test(r.url), pageSalaryMin: r.listed.salaryMin, pageSalaryMax: r.listed.salaryMax, pageYoeMin: r.listed.yoeMin, note: 'multi\nline "note", ok' }))
+      const checks = rows.map((r) => ({ itemId: r.itemId, live: !/hedge/.test(r.url), pageSalaryMin: r.listed.salaryMin, pageSalaryMax: r.listed.salaryMax, pageYoeMin: r.listed.yoeMin, roleFit: hooks.offFamily ? !hooks.offFamily.test(r.url) : null, agency: hooks.agency ? hooks.agency.test(r.url) : false, note: 'multi\nline "note", ok' }))
       const writeCode = prompt.split('<<<CODE\n')[2].split('\nCODE')[0].replace(/\[\/\* FILL IN[^\]]*\]/, JSON.stringify(checks))
       return runSandbox(writeCode)
     }
@@ -385,6 +385,23 @@ async function runWorkflow(args, hooks = {}) {
   assert.match(dead.result.stopReason, /^account error/)
   assert.strictEqual(dead.calls.filter((c) => c.startsWith('search:')).length, 1, 'no further shards searched after the account error')
   SEARCH_FAIL = null
+
+  // 15. Store engine: no discovery; the low-end pay rule, title exclusion and live-page role/agency checks re-tier stored rows.
+  const nSearch = searchCalls.length
+  const st1 = await runWorkflow({ engine: 'store', runTag: 'srch', payLowMin: 195000, verifyTier: 'A', verifyTop: 100, excludeTitles: ['zzz'] }, { offFamily: /alpha/ })
+  assert.strictEqual(searchCalls.length, nSearch, 'store engine searches nothing')
+  assert.ok(!st1.calls.some((c) => c.startsWith('search:') || c.startsWith('create:')))
+  assert.match(st1.result.stopReason, /^reused stored rows/)
+  const t15 = Object.fromEntries(JSON.parse(sqlite(['-json', ':memory:'], `.import --csv ${path.join(tmp, 'out.csv')} t\nSELECT * FROM t;`)).map((x) => [x.company, x]))
+  assert.strictEqual(t15['Beta Pay'].tier, 'B', '190k low end is under payLowMin 195k')
+  assert.strictEqual(t15['Beta Pay'].posting_status, 'unchecked', 'verifyTier A leaves tier B alone')
+  assert.strictEqual(t15.Alpha.tier, 'C'); assert.strictEqual(t15.Alpha.role_check, 'off-family')
+  const st2 = await runWorkflow({ engine: 'store', runTag: 'srch', verifyTier: 'A', verifyTop: 100, excludeTitles: ['forward deployed'] })
+  assert.strictEqual(st2.result.census.tierA + st2.result.census.tierB, 0, 'every stored title is excluded')
+  const st3 = await runWorkflow({ engine: 'store', runTag: 'srch', verifyTier: 'A', verifyTop: 100 }, { agency: /beta/ })
+  const t15c = Object.fromEntries(JSON.parse(sqlite(['-json', ':memory:'], `.import --csv ${path.join(tmp, 'out.csv')} t\nSELECT * FROM t;`)).map((x) => [x.company, x]))
+  assert.strictEqual(t15c['Beta Pay'].role_check, 'agency or aggregator'); assert.strictEqual(t15c['Beta Pay'].tier, 'C')
+  assert.ok(st3.result.csvWritten)
 
   fs.rmSync(tmp, { recursive: true, force: true })
   console.log('source-jobs mock test: all assertions passed')
