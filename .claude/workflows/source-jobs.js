@@ -467,6 +467,9 @@ const runCode = (code, { label, phase: ph, schema, timeout = 60000, repeatUntilI
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v)
 const WEBSET_ID_RE = /^webset_[A-Za-z0-9]+$/
 const LIMIT_RE = /\b429\b|rate.?limit|too many|concurren|quota|limit (reached|exceeded)|exceeded .*limit/i
+// Errors no other shard can get past: retrying or admitting more only burns agents.
+// (Seen live 2026-11-16: "Forbidden. You have run out of credits." failed ten shards in a row.)
+const FATAL_RE = /out of credits|top up|\b401\b|\b403\b|forbidden|unauthorized|invalid api key/i
 const createTries = new Map()
 const SLEEP_SCHEMA = schemaOf({ waitedSeconds: num })
 // The sandbox caps each setTimeout at 5s, so a ~90s wait is 18 short ones.
@@ -496,6 +499,9 @@ async function runShard(shard, excludeIds) {
       label: `create:${shard.key}${tries + attempt > 1 ? `:try${tries + attempt}` : ''}`, phase: 'Populate', schema: CREATE_SCHEMA,
     })
     // A rate/concurrency refusal is the scheduler's business, not a failure to retry into.
+    if (created?.error && FATAL_RE.test(String(created.error))) {
+      return { shard: shard.key, label: shard.label, websetId: null, fatal: true, error: String(created.error).slice(0, 300) }
+    }
     if (created?.error && LIMIT_RE.test(String(created.error))) {
       return { shard: shard.key, label: shard.label, websetId: null, limited: true, error: String(created.error).slice(0, 300) }
     }
@@ -641,6 +647,17 @@ while (true) {
       backoffs++
       log(`Shard ${shard.key}: create refused with nothing of this run in flight (${String(r.error).slice(0, 120)}) — backing off ~90s (#${backoffs})`)
       await runCode(sleepCode, { label: `backoff:${backoffs}`, phase: 'Populate', schema: SLEEP_SCHEMA, timeout: 110000 })
+    }
+    continue
+  }
+
+  if (r.fatal) {
+    // Not counted against the shard budget: the shard goes back on the queue so
+    // the final log lists it as never started, and nothing more is admitted.
+    queue.unshift(shard)
+    if (!stopReason || !stopReason.startsWith('account error')) {
+      stopReason = `account error — ${r.error}`
+      log(`Shard ${shard.key}: create refused for an account reason (${r.error}) — admitting nothing more; in-flight shards finish, then the run exports what it has`)
     }
     continue
   }

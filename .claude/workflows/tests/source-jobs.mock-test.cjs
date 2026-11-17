@@ -276,6 +276,17 @@ async function runWorkflow(args, hooks = {}) {
   assert.match(never.result.shards[0].error, /limit-refused 3x/)
   assert.strictEqual(never.result.note, 'No postings collected — nothing to verify or export.')
 
+  // 10. Out of credits: stop admitting at once, keep what finished, do not burn the shard budget.
+  const broke = await runWorkflow({ runTag: 'broke', shards: three, concurrency: 1, target: 500, verifyTop: 0, minGain: 0 }, {
+    agent: (label) => (label.startsWith('create:') && !label.startsWith('create:fde')
+      ? { error: 'Error in websets.create: Forbidden. You have run out of credits. Please top up to create a new search.' } : undefined),
+  })
+  assert.match(broke.result.stopReason, /^account error/)
+  assert.strictEqual(broke.result.shards.length, 1, 'failed shards are not recorded as run')
+  assert.strictEqual(broke.calls.filter((c) => c.startsWith('create:')).length, 2, 'one refusal is enough')
+  assert.ok(!broke.calls.some((c) => c.startsWith('plan-gaps')), 'planner not consulted')
+  assert.strictEqual(broke.result.csvRows, 6, 'finished shard still exported')
+
   fs.rmSync(tmp, { recursive: true, force: true })
   console.log('source-jobs mock test: all assertions passed')
 })().catch((e) => { console.error(e); process.exit(1) })
