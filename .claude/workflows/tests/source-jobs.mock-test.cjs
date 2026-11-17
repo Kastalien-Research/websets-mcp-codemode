@@ -55,6 +55,11 @@ function makeItems(websetId, shardKey) {
   })
 }
 const opLog = []
+const searchCalls = []
+const agentRunInputs = []
+const agentRuns = {}
+let SEARCH_FAIL = null
+let SEARCH_FIXTURES = {}
 async function callOperation(op, a = {}) {
   opLog.push(op)
   if (op === 'websets.get') {
@@ -92,6 +97,27 @@ async function callOperation(op, a = {}) {
     return { rows, count: rows.length }
   }
   if (op === 'exa.getContents') return { results: [{ url: a.urls[0], text: `page for ${a.urls[0]}` }] }
+  if (op === 'store.syncItem') {
+    sqlite([DB], `INSERT OR REPLACE INTO items (id, webset_id, name, url) VALUES (${lit(a.id)}, ${lit(a.websetId)}, ${lit(a.name)}, ${lit(a.url)});`)
+    return { id: a.id, synced: true }
+  }
+  if (op === 'exa.search') {
+    searchCalls.push(a)
+    assert.ok(a.contents.summary.schema.properties.roleFit, 'summary schema carries the shard role criterion')
+    assert.ok(!!a.includeDomains !== !!a.excludeDomains, 'either an ATS group or the open web minus aggregators')
+    if (SEARCH_FAIL) throw new Error(SEARCH_FAIL)
+    const host = a.includeDomains ? a.includeDomains[0] : 'open'
+    const rows = (SEARCH_FIXTURES[host] ?? []).filter((r) => !r.onlyQuery || a.query.startsWith(r.onlyQuery))
+    return { results: rows.map((r) => ({ url: r.url, title: r.pageTitle ?? 'page title', publishedDate: '2026-10-01', summary: r.raw ?? JSON.stringify({ isSingleJobPosting: true, isAggregatorOrAgency: false, stillOpen: true, inLocation: true, roleFit: true, salaryMin: 0, salaryMax: 0, yoeMin: -1, arrangement: 'Not stated', financeReq: 'Not required', welcomesFounders: false, ...r.s }) })), costDollars: { total: 0.05 } }
+  }
+  if (op === 'agentRuns.create') {
+    agentRunInputs.push(a.input.data)
+    const companies = a.input.data.map((d) => ({ index: d.index, employsFormerFounders: /beta/i.test(d.company), evidence: /beta/i.test(d.company) ? 'Jane Doe, ex-founder\nof X, is an engineer there' : 'none', sector: /beta/i.test(d.company) ? 'Fintech or financial infrastructure' : 'Made-up sector' }))
+    companies.push({ index: 99, employsFormerFounders: true, evidence: 'out of range', sector: 'Other' })
+    agentRuns.r1 = { id: 'r1', status: 'completed', output: { structured: { companies } }, costDollars: { total: 0.08 } }
+    return { id: 'r1', status: 'running' }
+  }
+  if (op === 'agentRuns.get') return agentRuns[a.id]
   throw new Error(`unmocked operation ${op}`)
 }
 const runSandbox = (code) => new AsyncFunction('callOperation', code)(callOperation)
@@ -106,6 +132,7 @@ function realCksum(file) {
   return { crc, bytes }
 }
 async function runWorkflow(args, hooks = {}) {
+  args = { engine: 'websets', ...args } // most cases below exercise the webset queue
   const calls = []
   const logs = []
   const agent = async (prompt, o = {}) => {
@@ -286,6 +313,78 @@ async function runWorkflow(args, hooks = {}) {
   assert.strictEqual(broke.calls.filter((c) => c.startsWith('create:')).length, 2, 'one refusal is enough')
   assert.ok(!broke.calls.some((c) => c.startsWith('plan-gaps')), 'planner not consulted')
   assert.strictEqual(broke.result.csvRows, 6, 'finished shard still exported')
+
+  // 11. Search engine: ATS sweep → sandbox gates → store → company research → same SQL/export.
+  SEARCH_FIXTURES = {
+    'jobs.ashbyhq.com': [
+      { url: 'https://jobs.ashbyhq.com/alpha/1/application', s: { title: 'Forward Deployed Engineer', company: 'Alpha', salaryMin: 200000, salaryMax: 250000, yoeMin: 3, welcomesFounders: true } }, // A: 40+30+20
+      { url: 'https://jobs.ashbyhq.com/alpha/1', s: { title: 'Forward Deployed Engineer', company: 'Alpha', salaryMin: 200000, salaryMax: 250000, yoeMin: 3 } }, // same posting once /application is stripped
+      { url: 'https://jobs.ashbyhq.com/beta/2', s: { title: 'Forward Deployed\nEngineer', company: 'Beta Pay', salaryMin: 190, salaryMax: 240, yoeMin: 4 } }, // A; founders via company research
+      { url: 'https://jobs.ashbyhq.com/sf/3', s: { title: 'FDE', company: 'Elsewhere', inLocation: false } },
+      { url: 'https://jobs.ashbyhq.com/pm/4', s: { title: 'Product Manager', company: 'Alpha', roleFit: false } },
+      { url: 'https://jobs.ashbyhq.com/old/5', s: { title: 'FDE', company: 'Gone', stillOpen: false } },
+      { url: 'https://jobs.ashbyhq.com/list', s: { isSingleJobPosting: false, title: '', company: 'Alpha' } },
+      { url: 'https://jobs.ashbyhq.com/bad/6', raw: 'not json' },
+    ],
+    open: [
+      { url: 'https://agg.example/job/1', s: { title: 'Forward Deployed Engineer', company: 'Alpha', isAggregatorOrAgency: true } },
+      { url: 'https://careers.gamma.example/fde', s: { title: 'Forward Deployed Engineer', company: 'Gamma Capital', salaryMin: 150000, salaryMax: 170000, yoeMin: 2, financeReq: 'Required' } }, // C: below floor
+    ],
+  }
+  const one = [{ key: 'fde', label: 'FDE', titles: ['Forward Deployed Engineer', 'FDSE'], query: 'q1', roleCriterion: 'Is an FDE role.' }]
+  const sr = await runWorkflow({ engine: 'search', runTag: 'srch', shards: one, maxShards: 1, target: 500, verifyTop: 0 })
+  const thrown11 = sr.logs.filter((l) => l.startsWith('THROWN'))
+  assert.deepStrictEqual(thrown11, [], thrown11.join('\n'))
+  assert.strictEqual(sr.result.engine, 'search')
+  assert.strictEqual(sr.result.stopReason, 'search complete')
+  assert.strictEqual(searchCalls.length, 10, '2 titles × 5 domain groups')
+  assert.ok(searchCalls.every((c) => c.query.endsWith('job posting, New York City') && c.numResults === 50))
+  assert.ok(!sr.calls.some((c) => c.startsWith('create:') || c.startsWith('poll:')), 'no websets touched')
+  const s0 = sr.result.search[0]
+  assert.strictEqual(s0.written, 3, 'alpha (once), beta, gamma')
+  assert.ok(s0.dropped.wrongLocation >= 1 && s0.dropped.wrongRole >= 1 && s0.dropped.closed >= 1 && s0.dropped.notPosting >= 1 && s0.dropped.aggregator >= 1 && s0.dropped.parseFail >= 1 && s0.dropped.repeat >= 1)
+  assert.strictEqual(sr.result.exaCostDollars.search, 0.5)
+  assert.strictEqual(sr.result.census.uniqueJobs, 3)
+  // Only qualified companies are researched (Gamma is tier C), and only once.
+  assert.deepStrictEqual(agentRunInputs.flat().map((d) => d.company).sort(), ['Alpha', 'Beta Pay'])
+  assert.strictEqual(sr.result.census.companiesMissing, 0)
+  assert.strictEqual(sr.result.exaCostDollars.companies, 0.08)
+  const sback = JSON.parse(sqlite(['-json', ':memory:'], `.import --csv ${path.join(tmp, 'out.csv')} t\nSELECT * FROM t ORDER BY cast(rank AS integer);`))
+  const sby = Object.fromEntries(sback.map((x) => [x.company, x]))
+  assert.strictEqual(sby.Alpha.url, 'https://jobs.ashbyhq.com/alpha/1')
+  assert.strictEqual(sby.Alpha.founder_signal, 'Posting explicitly welcomes former founders'); assert.strictEqual(sby.Alpha.score, '90')
+  assert.strictEqual(sby.Alpha.sector, 'Other', 'off-enum sector coerced')
+  assert.strictEqual(sby.Alpha.source, 'search')
+  assert.strictEqual(sby['Beta Pay'].title, 'Forward Deployed Engineer')
+  assert.strictEqual(sby['Beta Pay'].salary_min, '190000')
+  assert.strictEqual(sby['Beta Pay'].founder_signal, 'Company is known to employ former founders'); assert.strictEqual(sby['Beta Pay'].score, '80')
+  assert.strictEqual(sby['Beta Pay'].founder_evidence, 'Jane Doe, ex-founder of X, is an engineer there')
+  assert.strictEqual(sby['Beta Pay'].sector, 'Fintech or financial infrastructure')
+  assert.strictEqual(sby['Gamma Capital'].tier, 'C'); assert.strictEqual(sby['Gamma Capital'].founder_signal, '')
+
+  // 12. Re-running the tag: rows are not duplicated and researched companies are not paid for again.
+  const runsBefore = agentRunInputs.length
+  const sr2 = await runWorkflow({ engine: 'search', runTag: 'srch', shards: one, maxShards: 1, target: 500, verifyTop: 0 })
+  assert.strictEqual(sr2.result.census.uniqueJobs, 3)
+  assert.strictEqual(agentRunInputs.length, runsBefore, 'company facts reused')
+  assert.ok(!sr2.calls.some((c) => c.startsWith('companies:')))
+
+  // 13. A search row beats a webset row for the same job (first-party URL wins the dedupe).
+  SEARCH_FIXTURES = { 'jobs.ashbyhq.com': [{ url: 'https://jobs.ashbyhq.com/acme/fde', s: { title: 'Forward Deployed Engineer', company: 'Acme AI', salaryMin: 200000, salaryMax: 260000, yoeMin: 3 } }] }
+  const mix = await runWorkflow({ engine: 'search', runTag: 'mock', shards: one, maxShards: 1, target: 500, verifyTop: 0, maxCompanies: 0 })
+  assert.strictEqual(mix.result.census.uniqueJobs, 7, 'the webset rows from earlier cases are still in the pool; Acme is not double-counted')
+  const mrow = JSON.parse(sqlite(['-json', ':memory:'], `.import --csv ${path.join(tmp, 'out.csv')} t\nSELECT * FROM t WHERE lower(company) = 'acme ai';`))
+  assert.strictEqual(mrow.length, 1); assert.strictEqual(mrow[0].source, 'search'); assert.strictEqual(mrow[0].url, 'https://jobs.ashbyhq.com/acme/fde')
+
+  // 14. Hybrid: search falls short of the target → websets pick up; out of credits on search → clean stop.
+  const hy = await runWorkflow({ engine: 'hybrid', runTag: 'hy', shards, concurrency: 1, target: 500, verifyTop: 0, maxCompanies: 0, minGain: 0 })
+  assert.ok(hy.calls.some((c) => c.startsWith('search:fde')) && hy.calls.some((c) => c.startsWith('create:fde')), 'both engines ran')
+  assert.strictEqual(hy.result.shards.length, 2)
+  SEARCH_FAIL = 'Error in exa.search: Forbidden. You have run out of credits.'
+  const dead = await runWorkflow({ engine: 'search', runTag: 'dead', shards: [...shards, { key: 'third', label: 'T', query: 'q', roleCriterion: 'c' }], searchConcurrency: 1, verifyTop: 0 })
+  assert.match(dead.result.stopReason, /^account error/)
+  assert.strictEqual(dead.calls.filter((c) => c.startsWith('search:')).length, 1, 'no further shards searched after the account error')
+  SEARCH_FAIL = null
 
   fs.rmSync(tmp, { recursive: true, force: true })
   console.log('source-jobs mock test: all assertions passed')
